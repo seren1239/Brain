@@ -1,6 +1,40 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Edit2, Trash2, Zap, X, Lightbulb, ChevronUp, ChevronDown, ArrowRight, ArrowLeft, Check } from 'lucide-react';
 
+function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: `${pos.x - size / 2}px`,
+        top: `${pos.y - size / 2}px`,
+        width: `${size}px`,
+        height: `${size}px`,
+        zIndex: isHovered || isSelected ? 10 : 2
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={onSelect}
+    >
+      <div
+        className="w-full h-full rounded-full cursor-pointer transition-all"
+        style={{
+          backgroundColor: color,
+          transform: isHovered ? 'scale(1.5)' : 'scale(1)',
+          boxShadow: isSelected ? '0 0 0 3px rgba(59, 130, 246, 0.5)' : 'none'
+        }}
+      />
+      {isHovered && (
+        <div className="absolute left-full ml-2 top-1/2 transform -translate-y-1/2 bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 whitespace-nowrap text-sm z-20">
+          {node.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IdeaTreeGenerator() {
   const [mode, setMode] = useState('exploration');
   const [inputValue, setInputValue] = useState('');
@@ -23,6 +57,10 @@ export default function IdeaTreeGenerator() {
   const [draggingNode, setDraggingNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [structureGridPositions, setStructureGridPositions] = useState({});
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [selectedStructureNode, setSelectedStructureNode] = useState(null);
   const nodeRefs = useRef({});
   const reflectionRefs = useRef({});
 
@@ -42,6 +80,29 @@ export default function IdeaTreeGenerator() {
         console.error('Failed to load saved data:', e);
       }
     }
+
+    // Keyboard event listeners for space bar panning
+    const handleKeyDown = (e) => {
+      if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        setIsSpacePressed(true);
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false);
+        setIsPanning(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, []);
 
   useEffect(() => {
@@ -72,9 +133,9 @@ export default function IdeaTreeGenerator() {
     const maxDepth = Math.max(...nodes.map(n => n.level), 0);
     const structureScore = Math.min(maxDepth / 5, 1);
 
-    const gravity = 
-      (humanScore * weights.userEdit) + 
-      (structureScore * weights.treeStructure) + 
+    const gravity =
+      (humanScore * weights.userEdit) +
+      (structureScore * weights.treeStructure) +
       ((1 - aiScore) * weights.aiGeneration);
 
     return Math.max(0, Math.min(1, gravity));
@@ -92,8 +153,8 @@ export default function IdeaTreeGenerator() {
           model: "claude-sonnet-4-20250514",
           max_tokens: 2000,
           messages: [
-            { 
-              role: "user", 
+            {
+              role: "user",
               content: `Generate 3 related ideas or subtopics for "${prompt}". 
 
 For each idea, optionally provide a brief reflection (5-7 sentences) ONLY if you have meaningful advice, a better perspective, or valuable insights. If there's nothing particularly insightful to add, set reflection to null.
@@ -116,7 +177,7 @@ Format:
       "reflection": "Another brief insight..." or null
     }
   ]
-}` 
+}`
             }
           ],
         })
@@ -132,7 +193,7 @@ Format:
 
       const newNodes = parsed.ideas.map((ideaObj, index) => {
         const nodeId = Date.now() + index;
-        
+
         if (ideaObj.reflection) {
           setReflections(prev => [{
             id: Date.now() + index + 1000,
@@ -191,18 +252,29 @@ Format:
           model: "claude-sonnet-4-20250514",
           max_tokens: 3000,
           messages: [
-            { 
-              role: "user", 
-              content: `Analyze these brainstormed ideas using the TTCT (Torrance Tests of Creative Thinking) framework.
+            {
+              role: "user",
+              content: `Analyze these brainstormed ideas using an Impact-Feasibility framework for design opportunities.
 
 Ideas:
 ${JSON.stringify(selectedNodesData, null, 2)}
 
-For each idea, provide:
-- priority: "high", "medium", or "low"
-- importance: score from 1-10
+For each idea, evaluate and provide:
+- impact: score from 1-10 (user value and problem-solving degree)
+- feasibility: score from 1-10 (technical complexity and implementation cost - higher score means easier to implement)
 - category: a brief category/theme label
-- reflection: a brief insight or advice (5-7 sentences) if meaningful, otherwise null
+- analysis: AI analysis of why this idea matters and what considerations exist (2-3 sentences)
+- recommendedAction: specific actionable recommendation based on the quadrant (1-2 sentences)
+
+Impact considers:
+- User value provided
+- Degree of problem solving
+- Experience improvement
+
+Feasibility considers:
+- Technical complexity (inverse - simpler = higher score)
+- Implementation cost (inverse - cheaper = higher score)
+- Resource requirements (inverse - fewer = higher score)
 
 Also suggest:
 - mainThemes: 3-5 main themes these ideas fall into
@@ -213,15 +285,16 @@ Respond ONLY in JSON format:
   "analysis": [
     {
       "nodeId": number,
-      "priority": "high" | "medium" | "low",
-      "importance": number,
+      "impact": number (1-10),
+      "feasibility": number (1-10),
       "category": "string",
-      "reflection": "string or null"
+      "analysis": "string",
+      "recommendedAction": "string"
     }
   ],
   "mainThemes": ["theme1", "theme2", ...],
   "relationships": ["connection description", ...]
-}` 
+}`
             }
           ],
         })
@@ -233,7 +306,7 @@ Respond ONLY in JSON format:
       const parsed = JSON.parse(cleanText);
 
       setHierarchyAnalysis(parsed);
-      
+
       const newStructureReflections = [];
       parsed.analysis.forEach((analysis, index) => {
         if (analysis.reflection) {
@@ -248,7 +321,7 @@ Respond ONLY in JSON format:
         }
       });
       setStructureReflections(newStructureReflections);
-      
+
       setMode('structure');
     } catch (err) {
       console.error('Analysis error:', err);
@@ -281,13 +354,13 @@ Respond ONLY in JSON format:
   };
 
   const handleEditSave = () => {
-    setNodes(prev => prev.map(n => 
+    setNodes(prev => prev.map(n =>
       n.id === editingNode ? { ...n, text: editValue } : n
     ));
-    
+
     const newEditCount = editCount + 1;
     setEditCount(newEditCount);
-    
+
     const newGravity = calculateCreativityGravity();
     setCreativityHistory(prev => {
       const updated = [...prev];
@@ -296,7 +369,7 @@ Respond ONLY in JSON format:
       }
       return updated;
     });
-    
+
     setEditingNode(null);
     setEditValue('');
   };
@@ -331,7 +404,7 @@ Respond ONLY in JSON format:
     if (!node) return;
 
     setFocusedNode(nodeId);
-    
+
     const nodeElement = nodeRefs.current[nodeId];
     if (nodeElement) {
       nodeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -345,7 +418,7 @@ Respond ONLY in JSON format:
     if (!reflection) return;
 
     setFocusedReflection(reflection.id);
-    
+
     const reflectionElement = reflectionRefs.current[reflection.id];
     if (reflectionElement) {
       reflectionElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -356,61 +429,87 @@ Respond ONLY in JSON format:
 
   const handleMouseDown = (e, node) => {
     if (editingNode === node.id || e.target.closest('.node-controls')) return;
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    setDraggingNode(node.id);
-    setDragOffset({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    });
+
+    if (isSpacePressed) {
+      // Start panning
+      setIsPanning(true);
+      setPanStart({
+        x: e.clientX + e.currentTarget.scrollLeft,
+        y: e.clientY + e.currentTarget.scrollTop
+      });
+    } else {
+      // Start dragging node
+      const rect = e.currentTarget.getBoundingClientRect();
+      setDraggingNode(node.id);
+      setDragOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      });
+    }
     e.preventDefault();
   };
 
+  const handleCanvasMouseDown = (e) => {
+    if (isSpacePressed && !e.target.closest('.absolute')) {
+      setIsPanning(true);
+      const container = e.currentTarget;
+      setPanStart({
+        x: e.clientX + container.scrollLeft,
+        y: e.clientY + container.scrollTop
+      });
+      e.preventDefault();
+    }
+  };
+
   const handleMouseMove = (e) => {
+    if (isPanning) {
+      // Pan the canvas
+      const container = e.currentTarget;
+      container.scrollLeft = panStart.x - e.clientX;
+      container.scrollTop = panStart.y - e.clientY;
+      return;
+    }
+
     if (!draggingNode) return;
-    
+
     const container = e.currentTarget;
     const rect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft;
     const scrollTop = container.scrollTop;
-    
+
     const newX = e.clientX - rect.left + scrollLeft - dragOffset.x;
     const newY = e.clientY - rect.top + scrollTop - dragOffset.y;
-    
+
     if (mode === 'structure') {
-      // Grid-based positioning for structure mode
       const gridSize = 250;
       const rowHeight = 200;
-      
-      // Snap to grid
+
       const gridX = Math.round(newX / gridSize) * gridSize;
       const gridY = Math.round(newY / rowHeight) * rowHeight;
-      
-      // Determine priority based on Y position
+
       let priority = 'medium';
       if (gridY < 200) priority = 'high';
       else if (gridY >= 400) priority = 'low';
-      
+
       setStructureGridPositions(prev => ({
         ...prev,
         [draggingNode]: { x: gridX, y: gridY, priority }
       }));
-      
-      setNodes(prev => prev.map(n => 
-        n.id === draggingNode 
+
+      setNodes(prev => prev.map(n =>
+        n.id === draggingNode
           ? { ...n, x: gridX, y: gridY, structurePositioned: true }
           : n
       ));
     } else {
-      // Free positioning for exploration mode
-      setNodes(prev => prev.map(n => 
-        n.id === draggingNode 
-          ? { 
-              ...n, 
-              x: Math.max(0, newX), 
-              y: Math.max(0, newY), 
-              manuallyPositioned: true
-            }
+      setNodes(prev => prev.map(n =>
+        n.id === draggingNode
+          ? {
+            ...n,
+            x: Math.max(0, newX),
+            y: Math.max(0, newY),
+            manuallyPositioned: true
+          }
           : n
       ));
     }
@@ -418,6 +517,7 @@ Respond ONLY in JSON format:
 
   const handleMouseUp = () => {
     setDraggingNode(null);
+    setIsPanning(false);
   };
 
   const getNodePosition = (node) => {
@@ -425,16 +525,16 @@ Respond ONLY in JSON format:
     if (node.manuallyPositioned) {
       return { x: node.x, y: node.y };
     }
-    
+
     if (!node.parentId) return { x: node.x, y: node.y };
-    
+
     const parent = nodes.find(n => n.id === node.parentId);
     if (!parent) return { x: node.x, y: node.y };
-    
+
     const siblings = nodes.filter(n => n.parentId === node.parentId);
     const index = siblings.findIndex(n => n.id === node.id);
     const parentPos = getNodePosition(parent);
-    
+
     return {
       x: parentPos.x + (index - 1) * 200,
       y: parentPos.y + 150
@@ -447,10 +547,10 @@ Respond ONLY in JSON format:
       .map(node => {
         const parent = nodes.find(n => n.id === node.parentId);
         if (!parent) return null;
-        
+
         const parentPos = getNodePosition(parent);
         const nodePos = getNodePosition(node);
-        
+
         return (
           <line
             key={`line-${node.id}`}
@@ -465,14 +565,17 @@ Respond ONLY in JSON format:
       });
   };
 
-  const currentGravity = creativityHistory.length > 0 
-    ? creativityHistory[creativityHistory.length - 1] 
+  const currentGravity = creativityHistory.length > 0
+    ? creativityHistory[creativityHistory.length - 1]
     : 0.5;
 
-  const getPriorityColor = (priority) => {
-    if (priority === 'high') return 'border-red-500 bg-red-50';
-    if (priority === 'medium') return 'border-yellow-500 bg-yellow-50';
-    if (priority === 'low') return 'border-green-500 bg-green-50';
+  const getPriorityColor = (impact, feasibility) => {
+    const isHighImpact = impact > 5;
+    const isHighFeasibility = feasibility > 5;
+
+    if (isHighImpact && isHighFeasibility) return 'border-green-500 bg-green-50';
+    if (isHighImpact && !isHighFeasibility) return 'border-yellow-500 bg-yellow-50';
+    if (!isHighImpact && isHighFeasibility) return 'border-blue-500 bg-blue-50';
     return 'border-gray-300 bg-white';
   };
 
@@ -490,51 +593,43 @@ Respond ONLY in JSON format:
 
   if (mode === 'structure') {
     const selectedNodes = nodes.filter(n => selectedForStructure.has(n.id));
-    
+
     const getStructuredPosition = (node) => {
       if (!hierarchyAnalysis) return { x: 0, y: 0 };
-      
+
       // Use grid position if node has been dragged
       if (structureGridPositions[node.id]) {
         return structureGridPositions[node.id];
       }
-      
+
       // Use stored position if node has been positioned before
       if (node.structurePositioned && node.x !== undefined && node.y !== undefined) {
         return { x: node.x, y: node.y };
       }
-      
+
       const analysis = hierarchyAnalysis.analysis.find(a => a.nodeId === node.id);
       if (!analysis) return { x: 0, y: 0 };
-      
-      // Grid-based layout
-      const gridSize = 250;
-      const priorityY = {
-        'high': 100,
-        'medium': 300,
-        'low': 500
-      };
-      
-      const siblings = selectedNodes.filter(n => {
-        const sibAnalysis = hierarchyAnalysis.analysis.find(a => a.nodeId === n.id);
-        return sibAnalysis && sibAnalysis.priority === analysis.priority;
-      });
-      
-      const index = siblings.findIndex(n => n.id === node.id);
-      const startX = 200;
-      
-      return {
-        x: startX + (index * gridSize),
-        y: priorityY[analysis.priority] || 300
-      };
+
+      // Position based on Impact (Y-axis) and Feasibility (X-axis)
+      // Impact: 1-10 (low to high) → Y position (bottom to top)
+      // Feasibility: 1-10 (low to high) → X position (left to right)
+
+      const canvasWidth = 800;
+      const canvasHeight = 600;
+      const margin = 100;
+
+      const x = margin + ((analysis.feasibility - 1) / 9) * (canvasWidth - 2 * margin);
+      const y = canvasHeight - margin - ((analysis.impact - 1) / 9) * (canvasHeight - 2 * margin);
+
+      return { x, y };
     };
 
     const renderStructureConnections = () => {
       if (!hierarchyAnalysis) return null;
-      
+
       const connections = [];
       const priorityOrder = ['high', 'medium', 'low'];
-      
+
       // Group nodes by priority
       const nodesByPriority = {};
       selectedNodes.forEach(node => {
@@ -546,21 +641,22 @@ Respond ONLY in JSON format:
           nodesByPriority[analysis.priority].push(node);
         }
       });
-      
+
       // Connect nodes from higher to lower priority hierarchy
       for (let i = 0; i < priorityOrder.length - 1; i++) {
         const currentPriority = priorityOrder[i];
         const nextPriority = priorityOrder[i + 1];
-        
+
         const currentNodes = nodesByPriority[currentPriority] || [];
         const nextNodes = nodesByPriority[nextPriority] || [];
-        
+
         currentNodes.forEach(parentNode => {
           nextNodes.forEach(childNode => {
             const parentPos = getStructuredPosition(parentNode);
             const childPos = getStructuredPosition(childNode);
-            const size = getNodeSize(hierarchyAnalysis.analysis.find(a => a.nodeId === parentNode.id)?.importance || 5);
-            
+            const parentAnalysis = hierarchyAnalysis.analysis.find(a => a.nodeId === parentNode.id);
+            const size = getNodeSize(parentAnalysis?.impact || 5, parentAnalysis?.feasibility || 5);
+
             connections.push(
               <line
                 key={`struct-${parentNode.id}-${childNode.id}`}
@@ -576,14 +672,45 @@ Respond ONLY in JSON format:
           });
         });
       }
-      
+
       return connections;
     };
 
-    const getNodeSize = (importance) => {
-      const baseSize = 150;
-      const scale = 1 + (importance - 5) * 0.1;
-      return baseSize * scale;
+    const getNodeSize = (impact, feasibility) => {
+      // All circles are the same small size
+      return 16; // diameter in pixels
+    };
+
+    const getQuadrantLabel = (impact, feasibility) => {
+      const isHighImpact = impact > 5;
+      const isHighFeasibility = feasibility > 5;
+
+      if (isHighImpact && isHighFeasibility) return 'Quick Wins';
+      if (isHighImpact && !isHighFeasibility) return 'Big Bets';
+      if (!isHighImpact && isHighFeasibility) return 'Fill-ins';
+      return 'Maybe Later';
+    };
+
+    const getQuadrantColor = (impact, feasibility) => {
+      const isHighImpact = impact > 5;
+      const isHighFeasibility = feasibility > 5;
+
+      if (isHighImpact && isHighFeasibility) return '#10b981';
+      if (isHighImpact && !isHighFeasibility) return '#f59e0b';
+      if (!isHighImpact && isHighFeasibility) return '#3b82f6';
+      return '#9ca3af';
+    };
+
+    const getCategoryColor = (category) => {
+      const colors = [
+        'bg-purple-100 text-purple-800',
+        'bg-blue-100 text-blue-800',
+        'bg-green-100 text-green-800',
+        'bg-pink-100 text-pink-800',
+        'bg-orange-100 text-orange-800'
+      ];
+      const hash = category.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      return colors[hash % colors.length];
     };
 
     return (
@@ -600,7 +727,7 @@ Respond ONLY in JSON format:
             </button>
           </div>
           <div className="flex items-center gap-4">
-            <p className="text-gray-600">Hierarchical view of your ideas</p>
+            <p className="text-gray-600">Impact-Feasibility Matrix</p>
             {hierarchyAnalysis && (
               <div className="flex gap-2">
                 {hierarchyAnalysis.mainThemes.slice(0, 3).map((theme, idx) => (
@@ -614,15 +741,11 @@ Respond ONLY in JSON format:
         </div>
 
         <div className="flex-1 flex overflow-hidden">
-          <div 
+          <div
             className="flex-1 overflow-auto relative"
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            style={{
-              backgroundImage: 'radial-gradient(circle, #e5e7eb 1px, transparent 1px)',
-              backgroundSize: '30px 30px'
-            }}
           >
             {!hierarchyAnalysis ? (
               <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
@@ -630,7 +753,38 @@ Respond ONLY in JSON format:
               </div>
             ) : (
               <>
-                <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                {/* 2x2 Matrix Background */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative" style={{ width: '800px', height: '600px' }}>
+                    {/* Quadrants */}
+                    <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300">
+                      <div className="absolute top-2 left-2 text-xs font-semibold text-yellow-700">Big Bets</div>
+                      <div className="absolute bottom-2 right-2 text-xs text-gray-400">High Impact, Low Feasibility</div>
+                    </div>
+                    <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l-2 border-b-2 border-gray-300">
+                      <div className="absolute top-2 right-2 text-xs font-semibold text-green-700">Quick Wins</div>
+                      <div className="absolute bottom-2 left-2 text-xs text-gray-400">High Impact, High Feasibility</div>
+                    </div>
+                    <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r-2 border-t-2 border-gray-300">
+                      <div className="absolute bottom-2 left-2 text-xs font-semibold text-gray-600">Maybe Later</div>
+                      <div className="absolute top-2 right-2 text-xs text-gray-400">Low Impact, Low Feasibility</div>
+                    </div>
+                    <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l-2 border-t-2 border-gray-300">
+                      <div className="absolute bottom-2 right-2 text-xs font-semibold text-blue-700">Fill-ins</div>
+                      <div className="absolute top-2 left-2 text-xs text-gray-400">Low Impact, High Feasibility</div>
+                    </div>
+
+                    {/* Axis Labels */}
+                    <div className="absolute -left-16 top-1/2 transform -translate-y-1/2 -rotate-90 text-sm font-semibold text-gray-700">
+                      Impact →
+                    </div>
+                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-8 text-sm font-semibold text-gray-700">
+                      Feasibility →
+                    </div>
+                  </div>
+                </div>
+
+                <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
                   {renderStructureConnections()}
                 </svg>
 
@@ -639,100 +793,20 @@ Respond ONLY in JSON format:
                   if (!analysis) return null;
 
                   const pos = getStructuredPosition(node);
-                  const size = getNodeSize(analysis.importance);
-                  const isEditing = editingNode === node.id;
-                  const isSelected = selectedNode === node.id;
-                  const hasReflection = structureReflections.some(r => r.nodeId === node.id);
-                  const isDragging = draggingNode === node.id;
+                  const size = getNodeSize(analysis.impact, analysis.feasibility);
+                  const color = getQuadrantColor(analysis.impact, analysis.feasibility);
+                  const isSelected = selectedStructureNode === node.id;
 
                   return (
-                    <div
+                    <CircleNode
                       key={node.id}
-                      onMouseDown={(e) => handleMouseDown(e, node)}
-                      className="absolute"
-                      style={{ 
-                        left: `${pos.x}px`, 
-                        top: `${pos.y}px`,
-                        width: `${size}px`,
-                        cursor: isDragging ? 'grabbing' : 'grab',
-                        transition: isDragging ? 'none' : 'all 0.2s ease'
-                      }}
-                    >
-                      {isEditing ? (
-                        <div className="bg-white p-3 rounded-lg shadow-lg border-2 border-blue-500">
-                          <textarea
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            className="w-full p-2 border rounded text-sm resize-none"
-                            rows="3"
-                            autoFocus
-                          />
-                          <div className="flex gap-2 mt-2">
-                            <button
-                              onClick={handleEditSave}
-                              className="flex-1 px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => setEditingNode(null)}
-                              className="flex-1 px-2 py-1 bg-gray-400 text-white rounded text-xs hover:bg-gray-500"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div 
-                            onClick={() => handleNodeClick(node)}
-                            className={`p-4 rounded-xl shadow-lg border-3 cursor-pointer ${getPriorityColor(analysis.priority)} hover:shadow-2xl transition-all relative ${
-                              isSelected ? 'scale-105 ring-2 ring-blue-400' : ''
-                            }`}
-                          >
-                            {hasReflection && (
-                              <div 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleReflectionAlertClick(node.id);
-                                }}
-                                className="absolute -top-2 -right-2 w-6 h-6 bg-yellow-400 rounded-full flex items-center justify-center cursor-pointer hover:bg-yellow-500 shadow-md z-10"
-                                title="View reflection"
-                              >
-                                <Lightbulb size={14} className="text-white" />
-                              </div>
-                            )}
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-bold text-gray-800 text-sm leading-tight mb-1">{node.text}</h4>
-                                <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${getCategoryColor(analysis.category)}`}>
-                                  {analysis.category}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          
-                          {isSelected && (
-                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white rounded-lg shadow-xl border border-gray-200 p-2 z-10 flex gap-2 node-controls">
-                              <button
-                                onClick={() => handleEdit(node)}
-                                className="p-2 hover:bg-blue-50 rounded transition-colors"
-                                title="Edit"
-                              >
-                                <Edit2 size={18} className="text-blue-600" />
-                              </button>
-                              <button
-                                onClick={() => handleDelete(node.id)}
-                                className="p-2 hover:bg-red-50 rounded transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 size={18} className="text-red-600" />
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
+                      node={node}
+                      pos={pos}
+                      size={size}
+                      color={color}
+                      isSelected={isSelected}
+                      onSelect={() => setSelectedStructureNode(node.id)}
+                    />
                   );
                 })}
               </>
@@ -740,7 +814,7 @@ Respond ONLY in JSON format:
 
             {creativityHistory.length > 0 && (
               <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 w-96 z-20">
-                <div 
+                <div
                   onClick={() => setShowFullGraph(!showFullGraph)}
                   className="bg-white rounded-full shadow-lg p-4 cursor-pointer hover:shadow-xl transition-shadow"
                 >
@@ -750,7 +824,7 @@ Respond ONLY in JSON format:
                     <span className="text-blue-600">Human</span>
                   </div>
                   <div className="relative h-3 bg-gradient-to-r from-purple-200 via-gray-200 to-blue-200 rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className="absolute top-0 h-full w-1 bg-gray-800 transition-all duration-500"
                       style={{ left: `${currentGravity * 100}%` }}
                     />
@@ -770,7 +844,7 @@ Respond ONLY in JSON format:
                       <div className="absolute top-0 left-0 text-xs text-gray-500">Human</div>
                       <div className="absolute bottom-0 left-0 text-xs text-gray-500">AI</div>
                       <div className="absolute bottom-0 right-0 text-xs text-gray-500">API Calls →</div>
-                      
+
                       <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                         <polyline
                           points={creativityHistory.map((gravity, index) => {
@@ -812,42 +886,124 @@ Respond ONLY in JSON format:
           </div>
 
           <div className="w-96 bg-white border-l border-gray-200 overflow-y-auto p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Lightbulb className="text-yellow-500" size={24} />
-              <h2 className="text-xl font-bold text-gray-800">Reflections</h2>
-            </div>
+            {!selectedStructureNode ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <Lightbulb size={64} className="mb-4 opacity-30" />
+                <p className="text-sm text-center">Select an idea to view details</p>
+              </div>
+            ) : (() => {
+              const selectedNode = selectedNodes.find(n => n.id === selectedStructureNode);
+              const analysis = hierarchyAnalysis?.analysis.find(a => a.nodeId === selectedStructureNode);
 
-            {structureReflections.length === 0 ? (
-              <div className="text-center text-gray-400 mt-8">
-                <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No reflections generated for these ideas</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {structureReflections.map(reflection => {
-                  const isFocused = focusedReflection === reflection.id;
-                  return (
-                    <div 
-                      key={reflection.id}
-                      ref={el => reflectionRefs.current[reflection.id] = el}
-                      className={`bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 shadow-sm border transition-all ${
-                        isFocused ? 'border-yellow-400 ring-2 ring-yellow-300 scale-105' : 'border-yellow-200'
-                      }`}
-                    >
-                      <div className="mb-2">
-                        <h3 className="font-semibold text-gray-800 text-sm mb-1">
-                          {reflection.topic}
-                        </h3>
-                        <p className="text-xs text-gray-500">{reflection.timestamp}</p>
-                      </div>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        {reflection.content}
-                      </p>
+              if (!selectedNode || !analysis) return null;
+
+              const isHighImpact = analysis.impact > 5;
+              const isHighFeasibility = analysis.feasibility > 5;
+
+              let quadrantLabel = 'Maybe Later';
+              let quadrantColor = '#9ca3af';
+
+              if (isHighImpact && isHighFeasibility) {
+                quadrantLabel = 'Quick Wins';
+                quadrantColor = '#10b981';
+              } else if (isHighImpact && !isHighFeasibility) {
+                quadrantLabel = 'Big Bets';
+                quadrantColor = '#f59e0b';
+              } else if (!isHighImpact && isHighFeasibility) {
+                quadrantLabel = 'Fill-ins';
+                quadrantColor = '#3b82f6';
+              }
+
+              return (
+                <div className="space-y-4">
+                  {/* Header */}
+                  <div className="flex items-start gap-3">
+                    <div className="p-3 bg-purple-100 rounded-lg">
+                      <Lightbulb size={24} className="text-purple-600" />
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <div className="flex-1">
+                      <h2 className="text-lg font-bold text-gray-800">Design Opportunity Details</h2>
+                    </div>
+                  </div>
+
+                  {/* Idea Description */}
+                  <div>
+                    <p className="text-gray-700 leading-relaxed">{selectedNode.text}</p>
+                  </div>
+
+                  {/* Quadrant Badge */}
+                  <div>
+                    <span
+                      className="inline-block px-4 py-2 rounded-full text-white font-semibold text-sm"
+                      style={{ backgroundColor: quadrantColor }}
+                    >
+                      {quadrantLabel}
+                    </span>
+                  </div>
+
+                  {/* Impact Score */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">Impact Score</h3>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-purple-600 transition-all"
+                          style={{ width: `${(analysis.impact / 10) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-2xl font-bold text-gray-800 w-12 text-right">{analysis.impact.toFixed(1)}</span>
+                    </div>
+                  </div>
+
+                  {/* Feasibility Score */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">Feasibility Score</h3>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-purple-600 transition-all"
+                          style={{ width: `${(analysis.feasibility / 10) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-2xl font-bold text-gray-800 w-12 text-right">{analysis.feasibility.toFixed(1)}</span>
+                    </div>
+                  </div>
+
+                  {/* Analysis Section */}
+                  {analysis.analysis && (
+                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">ℹ</span>
+                        </div>
+                        <h3 className="font-semibold text-blue-900">Analysis</h3>
+                      </div>
+                      <p className="text-sm text-blue-800 leading-relaxed">{analysis.analysis}</p>
+                    </div>
+                  )}
+
+                  {/* Recommended Action */}
+                  {analysis.recommendedAction && (
+                    <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs">⭐</span>
+                        </div>
+                        <h3 className="font-semibold text-green-900">Recommended Action</h3>
+                      </div>
+                      <p className="text-sm text-green-800 leading-relaxed">{analysis.recommendedAction}</p>
+                    </div>
+                  )}
+
+                  {/* Category */}
+                  <div>
+                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(analysis.category)}`}>
+                      {analysis.category}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -938,16 +1094,20 @@ Respond ONLY in JSON format:
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        <div 
+        <div
           className="flex-1 overflow-auto relative"
+          onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          style={{
+            cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : 'default'
+          }}
         >
           <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
             {renderConnections()}
           </svg>
-          
+
           {nodes.map(node => {
             const pos = getNodePosition(node);
             const isEditing = editingNode === node.id;
@@ -955,18 +1115,19 @@ Respond ONLY in JSON format:
             const isFocused = focusedNode === node.id;
             const isSelectedForStructure = selectedForStructure.has(node.id);
             const isDragging = draggingNode === node.id;
-            
+
             return (
               <div
                 key={node.id}
                 ref={el => nodeRefs.current[node.id] = el}
                 onMouseDown={(e) => handleMouseDown(e, node)}
                 className="absolute"
-                style={{ 
-                  left: `${pos.x}px`, 
+                style={{
+                  left: `${pos.x}px`,
                   top: `${pos.y}px`,
                   width: '150px',
-                  cursor: isDragging ? 'grabbing' : 'grab'
+                  cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : (isDragging ? 'grabbing' : 'grab'),
+                  pointerEvents: isSpacePressed ? 'none' : 'auto'
                 }}
               >
                 {isEditing ? (
@@ -996,26 +1157,24 @@ Respond ONLY in JSON format:
                 ) : (
                   <>
                     <div
-                      className={`bg-white p-4 rounded-lg shadow-md cursor-pointer hover:shadow-xl transition-all border-2 relative ${
-                        isSelected ? 'border-blue-500 scale-105' : 
-                        isFocused ? 'border-yellow-400 scale-110 shadow-2xl' : 
-                        isSelectedForStructure ? 'border-purple-500' :
-                        'border-transparent'
-                      }`}
+                      className={`bg-white p-4 rounded-lg shadow-md cursor-pointer hover:shadow-xl transition-all border-2 relative ${isSelected ? 'border-blue-500 scale-105' :
+                          isFocused ? 'border-yellow-400 scale-110 shadow-2xl' :
+                            isSelectedForStructure ? 'border-purple-500' :
+                              'border-transparent'
+                        }`}
                       style={{
                         transition: 'all 0.3s ease'
                       }}
                     >
-                      <div 
+                      <div
                         className="absolute top-1 right-1 z-10"
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleNodeSelection(node.id);
                         }}
                       >
-                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer ${
-                          isSelectedForStructure ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-300'
-                        }`}>
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer ${isSelectedForStructure ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-300'
+                          }`}>
                           {isSelectedForStructure && <Check size={14} className="text-white" />}
                         </div>
                       </div>
@@ -1023,7 +1182,7 @@ Respond ONLY in JSON format:
                         <p className="text-sm text-gray-700 break-words pr-6">{node.text}</p>
                       </div>
                     </div>
-                    
+
                     {isSelected && (
                       <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white rounded-lg shadow-xl border border-gray-200 p-2 z-10 flex gap-2 node-controls">
                         <button
@@ -1055,7 +1214,7 @@ Respond ONLY in JSON format:
               </div>
             );
           })}
-          
+
           {loading && (
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white px-6 py-4 rounded-lg shadow-xl">
               <p className="text-gray-700 font-semibold">Generating ideas...</p>
@@ -1064,7 +1223,7 @@ Respond ONLY in JSON format:
 
           {creativityHistory.length > 0 && (
             <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 w-96 z-20">
-              <div 
+              <div
                 onClick={() => setShowFullGraph(!showFullGraph)}
                 className="bg-white rounded-full shadow-lg p-4 cursor-pointer hover:shadow-xl transition-shadow"
               >
@@ -1074,7 +1233,7 @@ Respond ONLY in JSON format:
                   <span className="text-blue-600">Human</span>
                 </div>
                 <div className="relative h-3 bg-gradient-to-r from-purple-200 via-gray-200 to-blue-200 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className="absolute top-0 h-full w-1 bg-gray-800 transition-all duration-500"
                     style={{ left: `${currentGravity * 100}%` }}
                   />
@@ -1094,7 +1253,7 @@ Respond ONLY in JSON format:
                     <div className="absolute top-0 left-0 text-xs text-gray-500">Human</div>
                     <div className="absolute bottom-0 left-0 text-xs text-gray-500">AI</div>
                     <div className="absolute bottom-0 right-0 text-xs text-gray-500">API Calls →</div>
-                    
+
                     <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                       <polyline
                         points={creativityHistory.map((gravity, index) => {
@@ -1149,7 +1308,7 @@ Respond ONLY in JSON format:
           ) : (
             <div className="space-y-3">
               {reflections.map(reflection => (
-                <div 
+                <div
                   key={reflection.id}
                   onClick={() => handleReflectionClick(reflection.nodeId)}
                   className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 shadow-sm border border-yellow-200 relative cursor-pointer hover:shadow-md transition-shadow"
