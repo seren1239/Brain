@@ -1158,9 +1158,9 @@ Respond ONLY in JSON format:
                   <>
                     <div
                       className={`bg-white p-4 rounded-lg shadow-md cursor-pointer hover:shadow-xl transition-all border-2 relative ${isSelected ? 'border-blue-500 scale-105' :
-                          isFocused ? 'border-yellow-400 scale-110 shadow-2xl' :
-                            isSelectedForStructure ? 'border-purple-500' :
-                              'border-transparent'
+                        isFocused ? 'border-yellow-400 scale-110 shadow-2xl' :
+                          isSelectedForStructure ? 'border-purple-500' :
+                            'border-transparent'
                         }`}
                       style={{
                         transition: 'all 0.3s ease'

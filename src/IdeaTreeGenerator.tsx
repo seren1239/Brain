@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ChevronUp, ChevronDown, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ChevronUp, ChevronDown, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles } from 'lucide-react';
 
 function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -38,6 +38,7 @@ function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
 export default function IdeaTreeGenerator() {
   const [mode, setMode] = useState('exploration');
   const [inputValue, setInputValue] = useState('');
+  const [landingInputValue, setLandingInputValue] = useState(''); // Landing page input
   const [nodes, setNodes] = useState([]);
   const [reflections, setReflections] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -65,9 +66,13 @@ export default function IdeaTreeGenerator() {
   const [selectedStructureNode, setSelectedStructureNode] = useState(null);
   const [currentStep, setCurrentStep] = useState(1); // Track current exploration step
   const [designTopic, setDesignTopic] = useState(''); // Store the initial design topic
+  const [topicNodeId, setTopicNodeId] = useState(null); // Store the TOPIC node ID
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // Track which node is hovered
   const nodeRefs = useRef({});
   const reflectionRefs = useRef({});
+
+  // Check if we should show landing page (no nodes exist yet)
+  const showLandingPage = nodes.length === 0 && !loading;
 
   useEffect(() => {
     const saved = localStorage.getItem('ideaTreeData');
@@ -82,6 +87,7 @@ export default function IdeaTreeGenerator() {
         setHierarchyAnalysis(data.hierarchyAnalysis || null);
         setStructureReflections(data.structureReflections || []);
         setDesignTopic(data.designTopic || '');
+        setTopicNodeId(data.topicNodeId || null);
 
         // Determine current step from nodes
         if (data.nodes && data.nodes.length > 0) {
@@ -129,10 +135,11 @@ export default function IdeaTreeGenerator() {
       hierarchyAnalysis,
       structureReflections,
       currentStep,
-      designTopic
+      designTopic,
+      topicNodeId
     };
     localStorage.setItem('ideaTreeData', JSON.stringify(dataToSave));
-  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic]);
+  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId]);
 
   // Calculate Creativity Index using TTCT + Dependency Framework
   const calculateCreativityIndex = () => {
@@ -219,10 +226,49 @@ export default function IdeaTreeGenerator() {
     return words.slice(0, 3).join(' ');
   };
 
-  // Step 1: Problem Framing - 4 main nodes (Context, User, Task, Goal) - ALL AT ONCE
-  const generateStep1ProblemFraming = async (designTopic) => {
-    setDesignTopic(designTopic);
+  // Handle Start Exploration from Landing Page
+  const handleStartExploration = async () => {
+    if (!landingInputValue.trim()) {
+      alert('Please enter your idea first.');
+      return;
+    }
+
+    const topicText = landingInputValue.trim();
+    setDesignTopic(topicText);
     setLoading(true);
+
+    try {
+      // First, create TOPIC node
+      const topicNodeId = Date.now();
+      const topicNode = {
+        id: topicNodeId,
+        text: topicText,
+        keyword: extractKeyword(topicText),
+        type: 'topic',
+        step: 0,
+        category: 'TOPIC',
+        parentId: null,
+        x: 600, // Center of canvas
+        y: 100, // Top area
+        level: 0,
+        manuallyPositioned: false
+      };
+
+      setNodes([topicNode]);
+      setTopicNodeId(topicNodeId);
+
+      // Then generate Step 1 nodes (Context, User, Task, Goal) as children of TOPIC
+      await generateStep1ProblemFraming(topicText, topicNodeId);
+    } catch (err) {
+      console.error('Start exploration error:', err);
+      alert('An error occurred while starting exploration.');
+      setLoading(false);
+    }
+  };
+
+  // Step 1: Problem Framing - 4 main nodes (Context, User, Task, Goal) - ALL AT ONCE
+  const generateStep1ProblemFraming = async (designTopic, parentTopicId = null) => {
+    setDesignTopic(designTopic);
     try {
       const response = await fetch("http://localhost:3001/api/anthropic", {
         method: "POST",
@@ -302,10 +348,10 @@ Note:
           type: 'main',
           step: 1,
           category: nodeObj.category,
-          parentId: null,
-          x: 200 + (index * 250),
-          y: 200,
-          level: 0,
+          parentId: parentTopicId, // Connect to TOPIC node
+          x: 300 + (index * 250),
+          y: 250, // Below TOPIC node
+          level: 1,
           manuallyPositioned: false
         };
       });
@@ -1311,6 +1357,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
 
   const getNodeSizeForConnection = (node) => {
     // Return diameter for circular nodes
+    if (node.type === 'topic') return 140;
     if (node.type === 'main') return 120;
     if (node.type === 'sub') return 100;
     if (node.type === 'insight') return 80;
@@ -1999,12 +2046,86 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
     );
   }
 
+  // Landing Page
+  if (showLandingPage) {
+    return (
+      <div className="w-full h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50 flex flex-col items-center justify-center p-8">
+        {/* Logo and Tagline */}
+        <div className="text-center mb-12">
+          <h1 className="text-6xl font-bold text-black mb-2">Nō AI</h1>
+          <p className="text-xl text-black mb-1">LOGO</p>
+          <p className="text-lg text-gray-700 mt-4 max-w-2xl">
+            Transform your ideas into structured insights with AI-powered exploration.
+          </p>
+        </div>
+
+        {/* Idea Input Section */}
+        <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-3xl mb-12">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-4">Type down your idea</h2>
+          <textarea
+            value={landingInputValue}
+            onChange={(e) => setLandingInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !loading && landingInputValue.trim()) {
+                if (e.shiftKey) {
+                  // Shift+Enter: new line
+                  return;
+                }
+                e.preventDefault();
+                handleStartExploration();
+              }
+            }}
+            placeholder="Enter your creative concept, problem to solve, or topic to explore..."
+            className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 resize-none mb-4 min-h-[120px] text-base"
+            disabled={loading}
+          />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500">Press Enter to start</p>
+            <button
+              onClick={handleStartExploration}
+              disabled={loading || !landingInputValue.trim()}
+              className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-all shadow-lg"
+            >
+              {loading ? 'Starting...' : 'Start Exploration'}
+              <ArrowRight size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Features Section */}
+        <div className="text-center">
+          <h3 className="text-xl font-semibold text-gray-800 mb-6">Features</h3>
+          <div className="flex gap-12 justify-center">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+              <span className="text-gray-700 font-medium">Semantic Graph</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+              <span className="text-gray-700 font-medium">Reflection Panel</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+              <span className="text-gray-700 font-medium">Creativity Report</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex flex-col">
       <div className="bg-white shadow-sm p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-800">💡 Exploration Mode</h1>
+            {nodes.length > 0 && designTopic && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-600">Topic:</span>
+                <span className="text-sm text-gray-700">{designTopic}</span>
+              </div>
+            )}
             {nodes.length > 0 && (
               <div className="mt-2 flex items-center gap-2">
                 <span className="text-sm font-semibold text-gray-600">
@@ -2020,19 +2141,6 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
             )}
           </div>
           <div className="flex gap-2">
-            {selectedForStructure.size > 1 && (
-              <button
-                onClick={() => {
-                  const selectedNodesList = nodes.filter(n => selectedForStructure.has(n.id));
-                  generateMultiSelection(selectedNodesList);
-                }}
-                disabled={loading}
-                className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 font-semibold"
-              >
-                <Zap size={20} />
-                Generate from Selected ({selectedForStructure.size})
-              </button>
-            )}
             {selectedForStructure.size > 0 && (
               <button
                 onClick={analyzeHierarchy}
@@ -2043,54 +2151,28 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                 <ArrowRight size={20} />
               </button>
             )}
+            {nodes.length > 0 && (
+              <button
+                onClick={() => {
+                  setNodes([]);
+                  setReflections([]);
+                  setCreativityHistory([]);
+                  setEditCount(0);
+                  setAiGenerationCount(0);
+                  setSelectedForStructure(new Set());
+                  setHierarchyAnalysis(null);
+                  setCurrentStep(1);
+                  setDesignTopic('');
+                  setTopicNodeId(null);
+                  setLandingInputValue('');
+                  localStorage.removeItem('ideaTreeData');
+                }}
+                className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 font-semibold"
+              >
+                Reset
+              </button>
+            )}
           </div>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !loading && nodes.length === 0 && inputValue.trim()) {
-                generateIdeas(inputValue.trim());
-                setInputValue('');
-              }
-            }}
-            placeholder="Enter a design topic (e.g., Design a mobile application that helps university students quickly report and recover lost items on campus)"
-            className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
-            disabled={loading || nodes.length > 0}
-          />
-          <button
-            onClick={() => {
-              if (inputValue.trim() && !loading && nodes.length === 0) {
-                generateIdeas(inputValue.trim());
-                setInputValue('');
-              }
-            }}
-            disabled={loading || nodes.length > 0}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold"
-          >
-            {loading ? 'Generating...' : 'Generate'}
-          </button>
-          {nodes.length > 0 && (
-            <button
-              onClick={() => {
-                setNodes([]);
-                setReflections([]);
-                setCreativityHistory([]);
-                setEditCount(0);
-                setAiGenerationCount(0);
-                setSelectedForStructure(new Set());
-                setHierarchyAnalysis(null);
-                setCurrentStep(1);
-                setDesignTopic('');
-                localStorage.removeItem('ideaTreeData');
-              }}
-              className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 font-semibold"
-            >
-              Reset
-            </button>
-          )}
         </div>
       </div>
 
@@ -2118,7 +2200,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
             const isDragging = draggingNode === node.id;
             const isNodeHovered = hoveredNodeId === node.id;
 
-            const nodeSize = node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
+            const nodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
             const buttonRadius = (nodeSize / 2) + 25; // 버튼들이 노드 주변에 배치될 반경
             const hoverAreaSize = nodeSize + (buttonRadius * 2) + 20; // Hover 영역 확장
 
@@ -2185,7 +2267,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                     <>
                       <div
                         className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all border-2 relative flex flex-col items-center justify-center ${isSelected ? 'scale-105 ring-2 ring-blue-400' : isFocused ? 'scale-110 shadow-2xl' : ''
-                          } ${node.type === 'main' ? 'bg-blue-50 border-blue-300' :
+                          } ${node.type === 'topic' ? 'bg-purple-100 border-purple-400' : node.type === 'main' ? 'bg-blue-50 border-blue-300' :
                             node.type === 'sub' ? 'bg-green-50 border-green-300' :
                               node.type === 'insight' ? 'bg-yellow-50 border-yellow-300' :
                                 node.type === 'opportunity' ? 'bg-purple-50 border-purple-300' :
@@ -2195,7 +2277,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                           transition: 'all 0.3s ease',
                           width: '100%',
                           height: '100%',
-                          padding: node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px'
+                          padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px'
                         }}
                       >
                         <div className="w-full h-full flex flex-col items-center justify-center relative">
@@ -2208,7 +2290,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                             onClick={() => handleNodeClick(node)}
                             className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center"
                           >
-                            <p className={`break-words ${node.type === 'main' ? 'text-xs font-semibold' : 'text-xs'} text-gray-700 leading-tight`}>
+                            <p className={`break-words ${node.type === 'topic' ? 'text-sm font-bold' : node.type === 'main' ? 'text-xs font-semibold' : 'text-xs'} text-gray-700 leading-tight`}>
                               {node.keyword || extractKeyword(node.text)}
                             </p>
                             {isSelected && (
@@ -2238,7 +2320,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                 {/* 버튼 영역 - hover 상태 유지 */}
                 {isNodeHovered && !isEditing && (
                   <>
-                    {/* Top-right: Generate (Zap) - 별 버튼 위치 */}
+                    {/* Top-right: Generate (Zap) - 개별 노드 generate */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -2258,14 +2340,44 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                         transform: `translate(calc(-50% + ${buttonRadius * Math.cos(Math.PI * 0.25)}px), calc(-50% - ${buttonRadius * Math.sin(Math.PI * 0.25)}px))`,
                         pointerEvents: 'auto'
                       }}
-                      title={node.type === 'main' ? 'Expand to Sub-nodes' :
-                        node.type === 'sub' ? 'Generate Insights' :
-                          node.type === 'insight' ? 'Generate Opportunities' :
-                            'Generate'}
+                      title={node.type === 'topic' ? 'Topic Node' :
+                        node.type === 'main' ? 'Expand to Sub-nodes' :
+                          node.type === 'sub' ? 'Generate Insights' :
+                            node.type === 'insight' ? 'Generate Opportunities' :
+                              'Generate'}
                       disabled={loading}
                     >
                       <Zap size={14} className="text-green-600" />
                     </button>
+
+                    {/* Top-right next to Generate: Multi-generate (여러 선택된 노드로부터 generate) */}
+                    {selectedForStructure.size > 1 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          const selectedNodesList = nodes.filter(n => selectedForStructure.has(n.id));
+                          generateMultiSelection(selectedNodesList);
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                        onMouseEnter={() => setHoveredNodeId(node.id)}
+                        onMouseLeave={() => setHoveredNodeId(node.id)}
+                        className="absolute w-8 h-8 bg-white rounded-full shadow-lg border-2 border-purple-300 flex items-center justify-center hover:bg-purple-50 transition-colors z-20"
+                        style={{
+                          left: '50%',
+                          top: '50%',
+                          transform: `translate(calc(-50% + ${buttonRadius * Math.cos(Math.PI * 0.15)}px), calc(-50% - ${buttonRadius * Math.sin(Math.PI * 0.15)}px))`,
+                          pointerEvents: 'auto'
+                        }}
+                        title={`Generate from ${selectedForStructure.size} selected nodes`}
+                        disabled={loading}
+                      >
+                        <Sparkles size={14} className="text-purple-600" />
+                      </button>
+                    )}
 
                     {/* Middle-right: Edit */}
                     <button
