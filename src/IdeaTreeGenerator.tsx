@@ -1,5 +1,10 @@
+/// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ChevronUp, ChevronDown, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid } from 'lucide-react';
+
+// API URL: Use environment variable or fallback to localhost for development
+// In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
+const API_URL = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.DEV ? 'http://localhost:3001/api/anthropic' : '/api/anthropic');
 
 function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -47,7 +52,6 @@ export default function IdeaTreeGenerator() {
   const [loading, setLoading] = useState(false);
   const [focusedNode, setFocusedNode] = useState(null);
   const [creativityHistory, setCreativityHistory] = useState([]);
-  const [showFullGraph, setShowFullGraph] = useState(false);
   const [currentPage, setCurrentPage] = useState('main'); // 'main' or 'report'
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' or 'timeline'
   const [editCount, setEditCount] = useState(0);
@@ -57,8 +61,12 @@ export default function IdeaTreeGenerator() {
   const [analyzingStructure, setAnalyzingStructure] = useState(false);
   const [structureReflections, setStructureReflections] = useState([]);
   const [focusedReflection, setFocusedReflection] = useState(null);
+  const [expandedReflectionId, setExpandedReflectionId] = useState(null); // Track which reflection is expanded
+  const [isReflectionSidebarOpen, setIsReflectionSidebarOpen] = useState(true); // Control reflection sidebar visibility
+  const [isShiftPressed, setIsShiftPressed] = useState(false); // Track Shift key state
   const [draggingNode, setDraggingNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [mouseDownPos, setMouseDownPos] = useState({ x: 0, y: 0 });
   const [structureGridPositions, setStructureGridPositions] = useState({});
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -70,6 +78,38 @@ export default function IdeaTreeGenerator() {
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // Track which node is hovered
   const nodeRefs = useRef({});
   const reflectionRefs = useRef({});
+  const [animatingNodes, setAnimatingNodes] = useState(new Set()); // Track nodes that are animating
+
+  // Helper function to add nodes with sequential animation
+  const addNodesWithAnimation = (newNodes, delay = 300) => {
+    newNodes.forEach((node, index) => {
+      setTimeout(() => {
+        setNodes(prev => {
+          // Check if node already exists
+          if (prev.find(n => n.id === node.id)) return prev;
+
+          // Add node with animating flag
+          const nodeWithAnimation = { ...node, isAnimating: true };
+          const updated = [...prev, nodeWithAnimation];
+
+          // Remove animating flag after animation completes
+          setTimeout(() => {
+            setNodes(current => current.map(n =>
+              n.id === node.id ? { ...n, isAnimating: false } : n
+            ));
+            setAnimatingNodes(prev => {
+              const next = new Set(prev);
+              next.delete(node.id);
+              return next;
+            });
+          }, 600); // Match animation duration
+
+          setAnimatingNodes(prev => new Set(prev).add(node.id));
+          return updated;
+        });
+      }, index * delay);
+    });
+  };
 
   // Check if we should show landing page (no nodes exist yet)
   const showLandingPage = nodes.length === 0 && !loading;
@@ -101,11 +141,14 @@ export default function IdeaTreeGenerator() {
       }
     }
 
-    // Keyboard event listeners for space bar panning
+    // Keyboard event listeners for space bar panning and Shift key
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
         e.preventDefault();
         setIsSpacePressed(true);
+      }
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        setIsShiftPressed(true);
       }
     };
 
@@ -113,6 +156,9 @@ export default function IdeaTreeGenerator() {
       if (e.code === 'Space') {
         setIsSpacePressed(false);
         setIsPanning(false);
+      }
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        setIsShiftPressed(false);
       }
     };
 
@@ -270,7 +316,7 @@ export default function IdeaTreeGenerator() {
   const generateStep1ProblemFraming = async (designTopic, parentTopicId = null) => {
     setDesignTopic(designTopic);
     try {
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -304,16 +350,17 @@ Output 4 main problem-framing nodes:
 Respond ONLY in JSON format:
 {
   "nodes": [
-    { "category": "Context", "text": "...", "keyword": "...", "reflection": "..." },
-    { "category": "User", "text": "...", "keyword": "...", "reflection": "..." },
-    { "category": "Task", "text": "...", "keyword": "...", "reflection": "..." },
-    { "category": "Goal", "text": "...", "keyword": "...", "reflection": "..." }
+    { "category": "Context", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "User", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "Task", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "Goal", "text": "...", "keyword": "...", "critic": "...", "advice": "..." }
   ]
 }
 
 Note: 
-- "keyword" should be a concise 2-5 word phrase that captures the essence of the node text.
-- "reflection" (optional): If you have valuable advice, suggestions, or broader perspective insights for this node, provide a brief 1-2 sentence reflection. If not applicable, omit this field.`
+- "keyword" should be a concise 2–5 word phrase capturing the main meaning.
+- "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
+- "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
             }
           ],
         })
@@ -330,16 +377,24 @@ Note:
       const newNodes = parsed.nodes.map((nodeObj, index) => {
         const nodeId = Date.now() + index;
 
-        // Create reflection if provided
-        if (nodeObj.reflection) {
-          setReflections(prev => [{
-            id: nodeId + 10000,
-            nodeId: nodeId,
-            topic: nodeObj.text,
-            content: nodeObj.reflection,
-            timestamp: new Date().toLocaleTimeString()
-          }, ...prev]);
-        }
+        // Create reflections if provided (critic, advice)
+        const reflectionTypes = [
+          { type: 'critic', data: nodeObj.critic },
+          { type: 'advice', data: nodeObj.advice }
+        ];
+
+        reflectionTypes.forEach((refType, idx) => {
+          if (refType.data && typeof refType.data === 'string' && refType.data.trim()) {
+            setReflections(prev => [{
+              id: nodeId + 10000 + idx,
+              nodeId: nodeId,
+              topic: nodeObj.text, // Keep node text for reference
+              title: refType.data.trim(), // Use the reflection text as title
+              content: refType.data.trim(), // Same content for display
+              type: refType.type
+            }, ...prev]);
+          }
+        });
 
         return {
           id: nodeId,
@@ -356,7 +411,8 @@ Note:
         };
       });
 
-      setNodes(prev => [...prev, ...newNodes]);
+      // Add nodes with sequential animation
+      addNodesWithAnimation(newNodes, 300);
       setCurrentStep(2); // Move to step 2 after step 1 completion
 
       const newMetrics = calculateCreativityIndex();
@@ -382,7 +438,7 @@ Note:
   // Step 2: Sub-node Expansion - Internal function
   const generateStep2SubNodesInternal = async (parentNode) => {
     try {
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -414,14 +470,15 @@ Expand the main node into 1-3 concrete, specific sub-nodes that help detail the 
 Respond ONLY in JSON format:
 {
   "subNodes": [
-    { "text": "...", "keyword": "...", "reflection": "..." },
+    { "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
 
 Note: 
-- "keyword" should be a concise 2-4 word phrase that captures the essence of the sub-node text.
-- "reflection" (optional): If you have valuable advice, suggestions, or broader perspective insights for this sub-node, provide a brief 1-2 sentence reflection. If not applicable, omit this field.`
+- "keyword" should be a concise 2–5 word phrase capturing the main meaning.
+- "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
+- "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
             }
           ],
         })
@@ -441,16 +498,24 @@ Note:
       const newNodes = parsed.subNodes.map((subNodeObj, index) => {
         const nodeId = Date.now() + index;
 
-        // Create reflection if provided
-        if (subNodeObj.reflection) {
-          setReflections(prev => [{
-            id: nodeId + 10000,
-            nodeId: nodeId,
-            topic: subNodeObj.text,
-            content: subNodeObj.reflection,
-            timestamp: new Date().toLocaleTimeString()
-          }, ...prev]);
-        }
+        // Create reflections if provided (critic, advice)
+        const reflectionTypes = [
+          { type: 'critic', data: subNodeObj.critic },
+          { type: 'advice', data: subNodeObj.advice }
+        ];
+
+        reflectionTypes.forEach((refType, idx) => {
+          if (refType.data && typeof refType.data === 'string' && refType.data.trim()) {
+            setReflections(prev => [{
+              id: nodeId + 10000 + idx,
+              nodeId: nodeId,
+              topic: subNodeObj.text, // Keep node text for reference
+              title: refType.data.trim(), // Use the reflection text as title
+              content: refType.data.trim(), // Same content for display
+              type: refType.type
+            }, ...prev]);
+          }
+        });
 
         return {
           id: nodeId,
@@ -467,7 +532,8 @@ Note:
         };
       });
 
-      setNodes(prev => [...prev, ...newNodes]);
+      // Add nodes with sequential animation
+      addNodesWithAnimation(newNodes, 300);
       setCurrentStep(3); // Move to step 3 after step 2 completion
 
       const newMetrics = calculateCreativityIndex();
@@ -507,7 +573,7 @@ Note:
   // Step 3: User Behavior Insights - Internal function
   const generateStep3InsightsInternal = async (parentNode) => {
     try {
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -539,14 +605,15 @@ Generate 1-3 user behavior insights for this sub-node. Each insight should descr
 Respond ONLY in JSON format:
 {
   "insights": [
-    { "text": "...", "keyword": "...", "reflection": "..." },
+    { "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
 
 Note: 
-- "keyword" should be a concise 2-4 word phrase that captures the essence of the insight.
-- "reflection" (optional): If you have valuable advice, suggestions, or broader perspective insights for this insight, provide a brief 1-2 sentence reflection. If not applicable, omit this field.`
+- "keyword" should be a concise 2–5 word phrase capturing the main meaning.
+- "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
+- "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
             }
           ],
         })
@@ -565,16 +632,24 @@ Note:
       const newNodes = parsed.insights.map((insightObj, index) => {
         const nodeId = Date.now() + index;
 
-        // Create reflection if provided
-        if (insightObj.reflection) {
-          setReflections(prev => [{
-            id: nodeId + 10000,
-            nodeId: nodeId,
-            topic: insightObj.text,
-            content: insightObj.reflection,
-            timestamp: new Date().toLocaleTimeString()
-          }, ...prev]);
-        }
+        // Create reflections if provided (critic, advice)
+        const reflectionTypes = [
+          { type: 'critic', data: insightObj.critic },
+          { type: 'advice', data: insightObj.advice }
+        ];
+
+        reflectionTypes.forEach((refType, idx) => {
+          if (refType.data && typeof refType.data === 'string' && refType.data.trim()) {
+            setReflections(prev => [{
+              id: nodeId + 10000 + idx,
+              nodeId: nodeId,
+              topic: insightObj.text, // Keep node text for reference
+              title: refType.data.trim(), // Use the reflection text as title
+              content: refType.data.trim(), // Same content for display
+              type: refType.type
+            }, ...prev]);
+          }
+        });
 
         return {
           id: nodeId,
@@ -591,7 +666,8 @@ Note:
         };
       });
 
-      setNodes(prev => [...prev, ...newNodes]);
+      // Add nodes with sequential animation
+      addNodesWithAnimation(newNodes, 300);
       setCurrentStep(4); // Move to step 4 after step 3 completion
 
       const newMetrics = calculateCreativityIndex();
@@ -630,7 +706,7 @@ Note:
   // Step 4: Design Opportunities - Internal function
   const generateStep4OpportunitiesInternal = async (parentNode) => {
     try {
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -666,14 +742,15 @@ Generate 1-3 Design Opportunities per insight. A Design Opportunity is:
 Respond ONLY in JSON format:
 {
   "opportunities": [
-    { "text": "Opportunity to...", "keyword": "...", "reflection": "..." },
+    { "text": "Opportunity to...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
 
 Note: 
-- "keyword" should be a concise 2-4 word phrase that captures the essence of the opportunity.
-- "reflection" (optional): If you have valuable advice, suggestions, or broader perspective insights for this opportunity, provide a brief 1-2 sentence reflection. If not applicable, omit this field.`
+- "keyword" should be a concise 2–5 word phrase capturing the main meaning.
+- "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
+- "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
             }
           ],
         })
@@ -692,16 +769,24 @@ Note:
       const newNodes = parsed.opportunities.map((oppObj, index) => {
         const nodeId = Date.now() + index;
 
-        // Create reflection if provided
-        if (oppObj.reflection) {
-          setReflections(prev => [{
-            id: nodeId + 10000,
-            nodeId: nodeId,
-            topic: oppObj.text,
-            content: oppObj.reflection,
-            timestamp: new Date().toLocaleTimeString()
-          }, ...prev]);
-        }
+        // Create reflections if provided (critic, advice)
+        const reflectionTypes = [
+          { type: 'critic', data: oppObj.critic },
+          { type: 'advice', data: oppObj.advice }
+        ];
+
+        reflectionTypes.forEach((refType, idx) => {
+          if (refType.data && typeof refType.data === 'string' && refType.data.trim()) {
+            setReflections(prev => [{
+              id: nodeId + 10000 + idx,
+              nodeId: nodeId,
+              topic: oppObj.text, // Keep node text for reference
+              title: refType.data.trim(), // Use the reflection text as title
+              content: refType.data.trim(), // Same content for display
+              type: refType.type
+            }, ...prev]);
+          }
+        });
 
         return {
           id: nodeId,
@@ -718,7 +803,8 @@ Note:
         };
       });
 
-      setNodes(prev => [...prev, ...newNodes]);
+      // Add nodes with sequential animation
+      addNodesWithAnimation(newNodes, 300);
 
       const newMetrics = calculateCreativityIndex();
       setCreativityHistory(prev => [...prev, newMetrics]);
@@ -769,7 +855,7 @@ Note:
           hasReflection: reflections.some(r => r.nodeId === node.id)
         }));
 
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -780,46 +866,124 @@ Note:
           messages: [
             {
               role: "user",
-              content: `Analyze these brainstormed ideas using an Impact-Feasibility framework for design opportunities.
+              content: `Analyze the following design opportunities using a comparative Impact–Feasibility evaluation framework. 
+Your goal is to produce a meaningful distribution of ideas across different quadrants, avoiding clustering all ideas into the same region unless strictly justified.
 
 Ideas:
 ${JSON.stringify(selectedNodesData, null, 2)}
 
-For each idea, evaluate and provide:
-- impact: score from 1-10 (user value and problem-solving degree)
-- feasibility: score from 1-10 (technical complexity and implementation cost - higher score means easier to implement)
-- category: a brief category/theme label
-- analysis: AI analysis of why this idea matters and what considerations exist (2-3 sentences)
-- recommendedAction: specific actionable recommendation based on the quadrant (1-2 sentences)
+===========================
+EVALUATION PRINCIPLES
+===========================
 
-Impact considers:
-- User value provided
-- Degree of problem solving
-- Experience improvement
+You MUST score ideas **relative to each other**, not independently.
 
-Feasibility considers:
-- Technical complexity (inverse - simpler = higher score)
-- Implementation cost (inverse - cheaper = higher score)
-- Resource requirements (inverse - fewer = higher score)
+Use the FULL 1–10 scale:
+- 1–3 = low
+- 4–6 = medium
+- 7–10 = high
 
-Also suggest:
-- mainThemes: 3-5 main themes these ideas fall into
-- relationships: key connections between ideas
+Avoid clustering:
+- Do NOT place all ideas in the same quadrant.
+- Variability in scores must come from **comparisons**, **penalties**, and **distinct strengths/weaknesses**.
+- Do NOT use uniformly high scores (6–9). 
+- Spread must feel natural and analytically justified, not artificially forced.
 
-Respond ONLY in JSON format:
+===========================
+IMPACT SCORING LOGIC
+===========================
+
+Impact = user value × severity × relevance.
+
+High impact (7–10) only if:
+- Addresses a high-frequency, high-stakes, or deeply disruptive pain point.
+- Provides substantial improvement to user experience or behavioral outcome.
+
+Medium impact (4–6) if:
+- Addresses a moderate or situational need.
+- Contributes partially to solving the root issue.
+
+Low impact (1–3) if ANY penalties apply:
+- Idea is vague, generic, or overly broad.
+- Poorly connected to a real user pain point.
+- User group is underspecified.
+- Outcome is low value or marginal improvement.
+- Problem applies only in edge cases.
+
+===========================
+FEASIBILITY SCORING LOGIC
+===========================
+
+Feasibility = technical simplicity + resource load + coordination overhead.
+
+High feasibility (7–10) only if:
+- Low technical complexity.
+- Minimal integration effort.
+- Low operational cost.
+- Clear path to execution.
+
+Medium feasibility (4–6) if:
+- Some uncertainty exists.
+- Requires moderate integration or behavior adoption.
+
+Low feasibility (1–3) if ANY penalties apply:
+- Requires multi-organization coordination or complex infrastructure.
+- Relies on volatile or hard-to-measure user behavior.
+- Depends on missing data, unstable signals, or high privacy risk.
+- High effort demanded from users or administrators.
+
+===========================
+DISTRIBUTION GUIDELINES
+===========================
+
+Do NOT force ideas into all four quadrants.
+
+Instead:
+- Ensure a realistic spread across quadrants.
+- Prevent all ideas from collapsing into the same quadrant.
+- Allow 0–2 empty quadrants if logically justified (e.g., theme-specific constraints).
+- The distribution must emerge from the scoring logic—not arbitrary balancing.
+
+The goal is **analytical differentiation**, not symmetry.
+
+===========================
+OUTPUT REQUIREMENTS
+===========================
+
+For each idea provide:
+1. impact: number 1–10  
+2. feasibility: number 1–10  
+3. category: 1–4 word conceptual cluster  
+4. insight: 1–2 concise sentences explaining the reasoning (problem-space only)  
+5. recommendedAction: 1 sentence using quadrant logic explicitly:
+   - Quick Wins → "prioritize"
+   - Big Bets → "explore constraints or phased strategy"
+   - Fill-ins → "address selectively when aligned"
+   - Maybe Later → "defer or discard"
+
+ALSO provide:
+- mainThemes: 3–5 conceptual problem-space themes  
+- relationships: 3–6 concise statements describing dependencies, contrasts, or overlaps  
+
+Keep all text short, analytical, and avoid features, solutions, or technologies.
+
+===========================
+JSON-ONLY OUTPUT FORMAT
+===========================
+
 {
   "analysis": [
     {
       "nodeId": number,
-      "impact": number (1-10),
-      "feasibility": number (1-10),
+      "impact": number,
+      "feasibility": number,
       "category": "string",
-      "analysis": "string",
+      "insight": "string",
       "recommendedAction": "string"
     }
   ],
-  "mainThemes": ["theme1", "theme2", ...],
-  "relationships": ["connection description", ...]
+  "mainThemes": ["string", ...],
+  "relationships": ["string", ...]
 }`
             }
           ],
@@ -868,9 +1032,36 @@ Respond ONLY in JSON format:
     });
   };
 
-  const handleNodeClick = (node) => {
+  const handleNodeClick = (node, e) => {
     if (editingNode === node.id) return;
-    setSelectedNode(selectedNode === node.id ? null : node.id);
+
+    // Shift + Click: Toggle structure selection (toggle on/off)
+    if (e && e.shiftKey) {
+      toggleNodeSelection(node.id);
+      // Also update selectedNode for visual feedback
+      setSelectedNode(node.id);
+      return;
+    }
+
+    // Normal click: clear multi-selection if active
+    if (selectedForStructure.size > 0) {
+      // Clear multi-selection completely (don't keep single selection for structure mode)
+      setSelectedForStructure(new Set());
+      setSelectedNode(node.id);
+      return;
+    }
+
+    // Normal click: toggle single selection (no multi-selection active)
+    // Also add to selectedForStructure so it counts as 1 selection for Structure Mode
+    if (selectedNode === node.id) {
+      // Deselecting
+      setSelectedNode(null);
+      setSelectedForStructure(new Set());
+    } else {
+      // Selecting
+      setSelectedNode(node.id);
+      setSelectedForStructure(new Set([node.id]));
+    }
   };
 
   const handleEdit = (node) => {
@@ -917,7 +1108,7 @@ Respond ONLY in JSON format:
         category: node.category || null
       }));
 
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1042,7 +1233,7 @@ Respond ONLY in JSON format:
   const generateMainNodeFromMulti = async (category) => {
     // Reuse Step 1 logic but for single node
     try {
-      const response = await fetch("http://localhost:3001/api/anthropic", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1076,10 +1267,15 @@ ${category === 'Goal' ? '- Goal: What outcome or value is the user pursuing?' : 
 Respond ONLY in JSON format:
 {
   "text": "...",
-  "keyword": "..."
+  "keyword": "...",
+  "critic": "...",
+  "advice": "..."
 }
 
-Note: "keyword" should be a concise 2-5 word phrase that captures the essence of the node text.`
+Note: 
+- "keyword" should be a concise 2–5 word phrase capturing the main meaning.
+- "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
+- "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
             }
           ],
         })
@@ -1092,6 +1288,26 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
 
       const existingMainNodes = nodes.filter(n => n.type === 'main' && n.step === 1);
       const nodeId = Date.now();
+
+      // Create reflections if provided (critic, advice)
+      const reflectionTypes = [
+        { type: 'critic', data: parsed.critic },
+        { type: 'advice', data: parsed.advice }
+      ];
+
+      reflectionTypes.forEach((refType, idx) => {
+        if (refType.data && typeof refType.data === 'string' && refType.data.trim()) {
+          setReflections(prev => [{
+            id: nodeId + 10000 + idx,
+            nodeId: nodeId,
+            topic: parsed.text, // Keep node text for reference
+            title: refType.data.trim(), // Use the reflection text as title
+            content: refType.data.trim(), // Same content for display
+            type: refType.type
+          }, ...prev]);
+        }
+      });
+
       const newNode = {
         id: nodeId,
         text: parsed.text,
@@ -1106,7 +1322,8 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
         manuallyPositioned: false
       };
 
-      setNodes(prev => [...prev, newNode]);
+      // Add node with animation
+      addNodesWithAnimation([newNode], 0);
       return newNode;
     } catch (err) {
       console.error('Main node generation error:', err);
@@ -1141,6 +1358,59 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
     setSelectedNode(null);
   };
 
+  const handleHome = () => {
+    // Reset all data and return to landing page
+    setNodes([]);
+    setReflections([]);
+    setCreativityHistory([]);
+    setEditCount(0);
+    setAiGenerationCount(0);
+    setSelectedForStructure(new Set());
+    setHierarchyAnalysis(null);
+    setCurrentStep(1);
+    setDesignTopic('');
+    setTopicNodeId(null);
+    setLandingInputValue('');
+    setMode('exploration');
+    localStorage.removeItem('ideaTreeData');
+  };
+
+  const handleExpandAll = async () => {
+    // Find all leaf nodes (nodes with no children)
+    const leafNodes = nodes.filter(node => {
+      const hasChildren = nodes.some(n => {
+        const nParentId = n.parentIds ? n.parentIds[0] : n.parentId;
+        return nParentId === node.id;
+      });
+      return !hasChildren;
+    });
+
+    if (leafNodes.length === 0) {
+      alert('No leaf nodes found to expand.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Generate for each leaf node based on its type
+      for (const node of leafNodes) {
+        if (node.type === 'main' && node.step === 1) {
+          await generateStep2SubNodes(node);
+        } else if (node.type === 'sub' && node.step === 2) {
+          await generateStep3Insights(node);
+        } else if (node.type === 'insight' && node.step === 3) {
+          await generateStep4Opportunities(node);
+        }
+        // Add small delay between generations to avoid overwhelming the API
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (err) {
+      console.error('Expand all error:', err);
+      alert('An error occurred while expanding nodes.');
+    }
+    setLoading(false);
+  };
+
   const handleDelete = (nodeId) => {
     const deleteNodeAndChildren = (id) => {
       const children = nodes.filter(n => n.parentId === id);
@@ -1161,9 +1431,12 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
     setReflections(prev => prev.filter(r => r.id !== reflectionId));
   };
 
-  const handleReflectionClick = (nodeId) => {
+  const handleReflectionClick = (reflectionId, nodeId) => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return;
+
+    // Toggle expand state
+    setExpandedReflectionId(prev => prev === reflectionId ? null : reflectionId);
 
     // Focus and select the node
     setFocusedNode(nodeId);
@@ -1202,23 +1475,43 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
       return;
     }
 
+    // Store mouse down position to detect if it's a click or drag
+    setMouseDownPos({ x: e.clientX, y: e.clientY });
+
     if (isSpacePressed) {
-      // Start panning
-      setIsPanning(true);
-      setPanStart({
-        x: e.clientX + e.currentTarget.scrollLeft,
-        y: e.clientY + e.currentTarget.scrollTop
-      });
+      // Start panning - find the canvas container
+      const container = e.target.closest('.flex-1.overflow-auto.relative') ||
+        document.querySelector('.flex-1.overflow-auto.relative');
+      if (container) {
+        setIsPanning(true);
+        setPanStart({
+          x: e.clientX + container.scrollLeft,
+          y: e.clientY + container.scrollTop
+        });
+      }
     } else {
       // Start dragging node
-      const rect = e.currentTarget.getBoundingClientRect();
+      // Find the canvas container (the one with overflow-auto)
+      const container = e.target.closest('.flex-1.overflow-auto.relative') ||
+        document.querySelector('.flex-1.overflow-auto.relative');
+
+      if (!container) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const nodePos = getNodePosition(node);
+
+      // Calculate offset from node center to mouse position
+      const mouseX = e.clientX - containerRect.left + container.scrollLeft;
+      const mouseY = e.clientY - containerRect.top + container.scrollTop;
+
       setDraggingNode(node.id);
       setDragOffset({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+        x: mouseX - nodePos.x,
+        y: mouseY - nodePos.y
       });
     }
     e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleCanvasMouseDown = (e) => {
@@ -1245,12 +1538,16 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
     if (!draggingNode) return;
 
     const container = e.currentTarget;
-    const rect = container.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft;
     const scrollTop = container.scrollTop;
 
-    const newX = e.clientX - rect.left + scrollLeft - dragOffset.x;
-    const newY = e.clientY - rect.top + scrollTop - dragOffset.y;
+    // Calculate new position based on mouse position and offset
+    const mouseX = e.clientX - containerRect.left + scrollLeft;
+    const mouseY = e.clientY - containerRect.top + scrollTop;
+
+    const newX = mouseX - dragOffset.x;
+    const newY = mouseY - dragOffset.y;
 
     if (mode === 'structure') {
       const gridSize = 250;
@@ -1290,6 +1587,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
   const handleMouseUp = () => {
     setDraggingNode(null);
     setIsPanning(false);
+    setMouseDownPos({ x: 0, y: 0 });
   };
 
   const getNodePosition = (node) => {
@@ -1322,6 +1620,8 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
 
   const renderConnections = () => {
     const connections = [];
+    const hasMultiSelection = selectedForStructure.size > 1;
+    const selectedNodeIds = new Set(selectedForStructure);
 
     nodes.forEach(node => {
       // Support both single parentId and multiple parentIds
@@ -1338,6 +1638,13 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
         const nodeSize = getNodeSizeForConnection(node);
         const parentSize = getNodeSizeForConnection(parent);
 
+        // Check if this connection is between selected nodes
+        const isSelectedConnection = hasMultiSelection &&
+          (selectedNodeIds.has(parentId) && selectedNodeIds.has(node.id));
+
+        // Check if this is a new connection (node is animating)
+        const isNewConnection = node.isAnimating || animatingNodes.has(node.id);
+
         connections.push(
           <line
             key={`line-${parentId}-${node.id}`}
@@ -1345,8 +1652,13 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
             y1={parentPos.y + parentSize / 2}
             x2={nodePos.x + nodeSize / 2}
             y2={nodePos.y + nodeSize / 2}
-            stroke="#cbd5e1"
-            strokeWidth="2"
+            stroke={isSelectedConnection ? "url(#multiSelectGradient)" : "#cbd5e1"}
+            strokeWidth={isSelectedConnection ? "3" : "2"}
+            className={isNewConnection ? "line-draw" : ""}
+            style={{
+              transition: isNewConnection ? 'none' : 'all 0.4s ease-out',
+              filter: isSelectedConnection ? 'drop-shadow(0 0 3px rgba(168, 85, 247, 0.5))' : 'none'
+            }}
           />
         );
       });
@@ -1415,15 +1727,69 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
       // Position based on Impact (Y-axis) and Feasibility (X-axis)
       // Impact: 1-10 (low to high) → Y position (bottom to top)
       // Feasibility: 1-10 (low to high) → X position (left to right)
+      // Quadrants:
+      // - Top-left (y < 300, x < 400): Big Bets (High Impact, Low Feasibility)
+      // - Top-right (y < 300, x >= 400): Quick Wins (High Impact, High Feasibility)
+      // - Bottom-left (y >= 300, x < 400): Maybe Later (Low Impact, Low Feasibility)
+      // - Bottom-right (y >= 300, x >= 400): Fill-ins (Low Impact, High Feasibility)
 
-      const canvasWidth = 800;
-      const canvasHeight = 600;
-      const margin = 100;
+      const graphWidth = 800;
+      const graphHeight = 600;
+      const nodeRadius = 8; // Node radius in pixels
+      const margin = 100 + nodeRadius; // Add node radius to margin to prevent clipping
 
-      const x = margin + ((analysis.feasibility - 1) / 9) * (canvasWidth - 2 * margin);
-      const y = canvasHeight - margin - ((analysis.impact - 1) / 9) * (canvasHeight - 2 * margin);
+      // Clamp values to 1-10 range to ensure they stay within bounds
+      const clampedFeasibility = Math.max(1, Math.min(10, analysis.feasibility || 5));
+      const clampedImpact = Math.max(1, Math.min(10, analysis.impact || 5));
 
-      return { x, y };
+      // Calculate position within graph bounds (0-800 for x, 0-600 for y)
+      // X-axis: feasibility maps from left (1) to right (10)
+      // - feasibility = 1 → x = margin (left)
+      // - feasibility = 5.5 → x = graphWidth/2 (center)
+      // - feasibility = 10 → x = graphWidth - margin (right)
+      const availableWidth = graphWidth - 2 * margin;
+      const graphX = margin + ((clampedFeasibility - 1) / 9) * availableWidth;
+
+      // Y-axis: impact maps from bottom (1) to top (10)
+      // - impact = 1 → y = graphHeight - margin (bottom)
+      // - impact = 5.5 → y = graphHeight/2 (center)
+      // - impact = 10 → y = margin (top)
+      const availableHeight = graphHeight - 2 * margin;
+      const graphY = (graphHeight - margin) - ((clampedImpact - 1) / 9) * availableHeight;
+
+      // Final clamp to ensure position is within graph bounds (accounting for node size)
+      const clampedGraphX = Math.max(nodeRadius, Math.min(graphWidth - nodeRadius, graphX));
+      const clampedGraphY = Math.max(nodeRadius, Math.min(graphHeight - nodeRadius, graphY));
+
+      // The graph container is centered using flex, so we need to calculate its offset
+      // The graph is centered, so its top-left corner is at:
+      // containerWidth/2 - graphWidth/2 for x
+      // containerHeight/2 - graphHeight/2 for y
+      // Since we can't easily get container dimensions, we'll use a ref or calculate on render
+      // For now, assume the graph is centered and add the offset
+      // The parent container uses flex items-center justify-center which centers the graph
+      // We need to get the actual offset, but since we can't, we'll use a useEffect to calculate it
+
+      // Calculate graph container offset (this will be recalculated when container resizes)
+      const graphContainer = document.getElementById('structure-graph-container');
+      if (graphContainer && graphContainer.parentElement) {
+        const parentRect = graphContainer.parentElement.getBoundingClientRect();
+        const graphRect = graphContainer.getBoundingClientRect();
+        const offsetX = graphRect.left - parentRect.left;
+        const offsetY = graphRect.top - parentRect.top;
+
+        return {
+          x: clampedGraphX + offsetX,
+          y: clampedGraphY + offsetY
+        };
+      }
+
+      // Fallback: assume graph is centered (50% - half of graph size)
+      // This is approximate but should work if container is reasonably sized
+      return {
+        x: clampedGraphX,
+        y: clampedGraphY
+      };
     };
 
     const renderStructureConnections = () => {
@@ -1550,14 +1916,18 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
             onMouseLeave={handleMouseUp}
           >
             {!hierarchyAnalysis ? (
-              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                <p className="text-gray-400">Analyzing structure...</p>
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
+                <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
+                  <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></div>
+                  <p className="text-gray-700 font-semibold text-lg">Analyzing structure...</p>
+                  <p className="text-gray-500 text-sm">Please wait</p>
+                </div>
               </div>
             ) : (
               <>
                 {/* 2x2 Matrix Background */}
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="relative" style={{ width: '800px', height: '600px' }}>
+                  <div id="structure-graph-container" className="relative" style={{ width: '800px', height: '600px' }}>
                     {/* Quadrants */}
                     <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300">
                       <div className="absolute top-2 left-2 text-xs font-semibold text-yellow-700">Big Bets</div>
@@ -1699,16 +2069,16 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                     </div>
                   </div>
 
-                  {/* Analysis Section */}
-                  {analysis.analysis && (
+                  {/* Insight Section */}
+                  {analysis.insight && (
                     <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-xs font-bold">ℹ</span>
                         </div>
-                        <h3 className="font-semibold text-blue-900">Analysis</h3>
+                        <h3 className="font-semibold text-blue-900">Insight</h3>
                       </div>
-                      <p className="text-sm text-blue-800 leading-relaxed">{analysis.analysis}</p>
+                      <p className="text-sm text-blue-800 leading-relaxed">{analysis.insight}</p>
                     </div>
                   )}
 
@@ -2116,67 +2486,59 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
 
   return (
     <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex flex-col">
-      <div className="bg-white shadow-sm p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-800">💡 Exploration Mode</h1>
-            {nodes.length > 0 && designTopic && (
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-600">Topic:</span>
-                <span className="text-sm text-gray-700">{designTopic}</span>
-              </div>
-            )}
-            {nodes.length > 0 && (
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-600">
-                  Step {currentStep}/4:
-                </span>
-                <span className="text-sm text-gray-600">
-                  {currentStep === 1 && 'Problem Framing'}
-                  {currentStep === 2 && 'Sub-node Expansion'}
-                  {currentStep === 3 && 'User Behavior Insights'}
-                  {currentStep === 4 && 'Design Opportunities'}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {selectedForStructure.size > 0 && (
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Top Menu Bar - Only in Exploration Mode, Canvas Centered */}
+        {mode === 'exploration' && nodes.length > 0 && (
+          <div className={`absolute top-6 z-50 ${isReflectionSidebarOpen ? 'left-[calc(50%-200px)]' : 'left-1/2'} transform -translate-x-1/2`}>
+            <div className="bg-white rounded-lg shadow-lg border border-purple-200 px-2 py-2 flex items-center gap-1">
+              {/* Home Button */}
+              <button
+                onClick={handleHome}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
+                title="Return to home"
+              >
+                <Home size={18} />
+                <span>Home</span>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-8 bg-gray-300"></div>
+
+              {/* Structure Mode Button */}
               <button
                 onClick={analyzeHierarchy}
-                disabled={analyzingStructure}
-                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 font-semibold"
+                disabled={analyzingStructure || selectedForStructure.size < 2}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${selectedForStructure.size >= 2
+                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md animate-pulse'
+                  : 'hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                title={selectedForStructure.size >= 2 ? `Go to Structure Mode (${selectedForStructure.size} selected)` : 'Select at least 2 nodes to analyze'}
               >
-                {analyzingStructure ? 'Analyzing...' : `Go to Structure Mode (${selectedForStructure.size} selected)`}
-                <ArrowRight size={20} />
+                <LayoutGrid size={18} />
+                <span>Structure Mode</span>
+                {selectedForStructure.size >= 2 && (
+                  <span className="ml-1 px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full">
+                    {selectedForStructure.size}
+                  </span>
+                )}
               </button>
-            )}
-            {nodes.length > 0 && (
-              <button
-                onClick={() => {
-                  setNodes([]);
-                  setReflections([]);
-                  setCreativityHistory([]);
-                  setEditCount(0);
-                  setAiGenerationCount(0);
-                  setSelectedForStructure(new Set());
-                  setHierarchyAnalysis(null);
-                  setCurrentStep(1);
-                  setDesignTopic('');
-                  setTopicNodeId(null);
-                  setLandingInputValue('');
-                  localStorage.removeItem('ideaTreeData');
-                }}
-                className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 font-semibold"
-              >
-                Reset
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
 
-      <div className="flex-1 flex overflow-hidden">
+              {/* Divider */}
+              <div className="w-px h-8 bg-gray-300"></div>
+
+              {/* Expand with AI Button */}
+              <button
+                onClick={handleExpandAll}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-orange-50 transition-colors text-gray-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Expand all leaf nodes with AI"
+              >
+                <Sparkles size={18} className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-orange-500" />
+                <span>Expand with AI</span>
+              </button>
+            </div>
+          </div>
+        )}
         <div
           className="flex-1 overflow-auto relative"
           onMouseDown={handleCanvasMouseDown}
@@ -2188,6 +2550,13 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
           }}
         >
           <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
+            <defs>
+              <linearGradient id="multiSelectGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#a855f7" stopOpacity="0.8" />
+                <stop offset="50%" stopColor="#ec4899" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.8" />
+              </linearGradient>
+            </defs>
             {renderConnections()}
           </svg>
 
@@ -2201,7 +2570,7 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
             const isNodeHovered = hoveredNodeId === node.id;
 
             const nodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
-            const buttonRadius = (nodeSize / 2) + 25; // 버튼들이 노드 주변에 배치될 반경
+            const buttonRadius = (nodeSize / 2) + 10; // 버튼들이 노드 주변에 배치될 반경 (더 가깝게)
             const hoverAreaSize = nodeSize + (buttonRadius * 2) + 20; // Hover 영역 확장
 
             return (
@@ -2226,6 +2595,18 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                     const target = e.target as HTMLElement;
                     if (!target.closest('button') && target.tagName !== 'BUTTON') {
                       handleMouseDown(e, node);
+                    }
+                  }}
+                  onClick={(e) => {
+                    // 노드 전체 영역 클릭 처리 (버튼 제외, 드래그가 아닌 경우만)
+                    const target = e.target as HTMLElement;
+                    const isDrag = draggingNode === node.id && (
+                      Math.abs(e.clientX - mouseDownPos.x) > 5 ||
+                      Math.abs(e.clientY - mouseDownPos.y) > 5
+                    );
+
+                    if (!target.closest('button') && target.tagName !== 'BUTTON' && !isSpacePressed && !isDrag) {
+                      handleNodeClick(node, e);
                     }
                   }}
                   className="absolute"
@@ -2266,28 +2647,46 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                   ) : (
                     <>
                       <div
-                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all border-2 relative flex flex-col items-center justify-center ${isSelected ? 'scale-105 ring-2 ring-blue-400' : isFocused ? 'scale-110 shadow-2xl' : ''
-                          } ${node.type === 'topic' ? 'bg-purple-100 border-purple-400' : node.type === 'main' ? 'bg-blue-50 border-blue-300' :
-                            node.type === 'sub' ? 'bg-green-50 border-green-300' :
-                              node.type === 'insight' ? 'bg-yellow-50 border-yellow-300' :
-                                node.type === 'opportunity' ? 'bg-purple-50 border-purple-300' :
-                                  'bg-white border-transparent'
-                          } ${isSelectedForStructure ? 'border-purple-500' : ''}`}
+                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isSelected ? 'scale-105 ring-2 ring-blue-400' : isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
                         style={{
-                          transition: 'all 0.3s ease',
+                          transition: node.isAnimating ? 'none' : 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
                           width: '100%',
                           height: '100%',
-                          padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px'
+                          padding: isSelectedForStructure && selectedForStructure.size > 1 ? '3px' : '0px',
+                          background: isSelectedForStructure && selectedForStructure.size > 1
+                            ? 'linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #f59e0b 100%)'
+                            : 'transparent',
+                          animation: isSelectedForStructure && selectedForStructure.size > 1 ? 'gradientSpread 0.6s ease-out' : undefined
                         }}
                       >
-                        <div className="w-full h-full flex flex-col items-center justify-center relative">
+                        <div
+                          className={`rounded-full w-full h-full flex flex-col items-center justify-center relative transition-all ${isSelectedForStructure && selectedForStructure.size > 1 ? '' : 'border-2'}`}
+                          style={{
+                            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                            background: node.type === 'topic' ? '#f3e8ff' : node.type === 'main' ? '#eff6ff' :
+                              node.type === 'sub' ? '#f0fdf4' :
+                                node.type === 'insight' ? '#fefce8' :
+                                  node.type === 'opportunity' ? '#faf5ff' : '#ffffff',
+                            borderColor: !isSelectedForStructure || selectedForStructure.size === 1
+                              ? (isSelectedForStructure
+                                ? '#9333ea'
+                                : node.type === 'topic' ? '#a855f7' : node.type === 'main' ? '#3b82f6' :
+                                  node.type === 'sub' ? '#10b981' :
+                                    node.type === 'insight' ? '#eab308' :
+                                      node.type === 'opportunity' ? '#a855f7' : 'transparent')
+                              : undefined,
+                            padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px',
+                            boxShadow: isSelectedForStructure && selectedForStructure.size > 1
+                              ? '0 0 15px rgba(236, 72, 153, 0.4), 0 0 25px rgba(245, 158, 11, 0.3)'
+                              : undefined
+                          }}
+                        >
                           {node.category && (
                             <span className="absolute -top-2 left-1/2 transform -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-semibold text-gray-600 bg-white shadow-sm border border-gray-200 whitespace-nowrap">
                               {node.category}
                             </span>
                           )}
                           <div
-                            onClick={() => handleNodeClick(node)}
                             className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center"
                           >
                             <p className={`break-words ${node.type === 'topic' ? 'text-sm font-bold' : node.type === 'main' ? 'text-xs font-semibold' : 'text-xs'} text-gray-700 leading-tight`}>
@@ -2298,18 +2697,6 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
                                 {node.text}
                               </p>
                             )}
-                          </div>
-                          <div
-                            className="absolute -bottom-1 -right-1 z-10"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleNodeSelection(node.id);
-                            }}
-                          >
-                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center cursor-pointer ${isSelectedForStructure ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-300'
-                              }`}>
-                              {isSelectedForStructure && <Check size={10} className="text-white" />}
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -2460,170 +2847,100 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
           })}
 
           {loading && (
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white px-6 py-4 rounded-lg shadow-xl">
-              <p className="text-gray-700 font-semibold">Generating ideas...</p>
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
+              <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
+                <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></div>
+                <p className="text-gray-700 font-semibold text-lg">Generating ideas...</p>
+                <p className="text-gray-500 text-sm">Please wait</p>
+              </div>
             </div>
           )}
 
+
           {mode === 'exploration' && nodes.length > 0 && (
-            <div className="absolute bottom-6 right-[420px] w-[480px] z-[100] shadow-2xl bg-white rounded-lg" style={{ pointerEvents: 'auto' }}>
-              <div
-                onClick={() => setShowFullGraph(!showFullGraph)}
-                className="bg-white rounded-lg shadow-lg p-4 cursor-pointer hover:shadow-xl transition-shadow border border-gray-200"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
-                    <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowFullGraph(!showFullGraph);
-                    }}
-                    className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition-colors"
-                    title={showFullGraph ? 'Collapse' : 'Expand'}
-                  >
-                    {showFullGraph ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-                  </button>
+            <div className={`fixed bottom-6 w-[480px] z-[100] shadow-2xl bg-white rounded-lg ${isReflectionSidebarOpen ? 'right-[400px]' : 'right-6'}`} style={{ pointerEvents: 'auto' }}>
+              <div className="bg-white rounded-lg shadow-lg p-4 border border-gray-200">
+                <div className="mb-3">
+                  <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
+                  <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
                 </div>
                 <div className="border-t border-dotted border-blue-300 mb-3"></div>
 
-                {!showFullGraph && (
-                  <div className="relative h-32 bg-gray-50 rounded-lg p-4 mb-3">
-                    <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      {/* Creativity line (green) */}
-                      <polyline
-                        points={creativityHistory.map((metrics, index) => {
-                          const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                          const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                          const y = (1 - creativity) * 80 + 10;
-                          return `${x},${y}`;
-                        }).join(' ')}
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                      {creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
+                <div className="relative h-32 bg-gray-50 rounded-lg p-4 mb-3">
+                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+                    {/* Background grid lines for better visualization */}
+                    <defs>
+                      <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
+                      </pattern>
+                    </defs>
+                    <rect width="100" height="100" fill="url(#grid)" />
+
+                    {/* Creativity line (green) */}
+                    <polyline
+                      points={creativityHistory.map((metrics, index) => {
+                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                         const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                        const y = (1 - creativity) * 80 + 10;
-                        return (
-                          <circle
-                            key={`creativity-${index}`}
-                            cx={x}
-                            cy={y}
-                            r="3"
-                            fill="#10b981"
-                            stroke="white"
-                            strokeWidth="1"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        );
-                      })}
+                        const y = 90 - (creativity * 80);
+                        return `${x},${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {creativityHistory.map((metrics, index) => {
+                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
+                      const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
+                      const y = 90 - (creativity * 80);
+                      return (
+                        <circle
+                          key={`creativity-${index}`}
+                          cx={x}
+                          cy={y}
+                          r="3.5"
+                          fill="#10b981"
+                          stroke="white"
+                          strokeWidth="2"
+                          opacity="0.9"
+                        />
+                      );
+                    })}
 
-                      {/* Dependency line (orange) */}
-                      <polyline
-                        points={creativityHistory.map((metrics, index) => {
-                          const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                          const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                          const y = (1 - dependency) * 80 + 10;
-                          return `${x},${y}`;
-                        }).join(' ')}
-                        fill="none"
-                        stroke="#f97316"
-                        strokeWidth="2"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                      {creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
+                    {/* Dependency line (orange) */}
+                    <polyline
+                      points={creativityHistory.map((metrics, index) => {
+                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                         const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                        const y = (1 - dependency) * 80 + 10;
-                        return (
-                          <circle
-                            key={`dependency-${index}`}
-                            cx={x}
-                            cy={y}
-                            r="3"
-                            fill="#f97316"
-                            stroke="white"
-                            strokeWidth="1"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        );
-                      })}
-                    </svg>
-                  </div>
-                )}
-
-                {showFullGraph && (
-                  <div className="relative h-48 bg-gray-50 rounded-lg p-4 mb-3">
-                    <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      {/* Creativity line (green) */}
-                      <polyline
-                        points={creativityHistory.map((metrics, index) => {
-                          const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                          const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                          const y = (1 - creativity) * 80 + 10;
-                          return `${x},${y}`;
-                        }).join(' ')}
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2.5"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                      {creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                        const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                        const y = (1 - creativity) * 80 + 10;
-                        return (
-                          <circle
-                            key={`creativity-${index}`}
-                            cx={x}
-                            cy={y}
-                            r="3.5"
-                            fill="#10b981"
-                            stroke="white"
-                            strokeWidth="1.5"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        );
-                      })}
-
-                      {/* Dependency line (orange) */}
-                      <polyline
-                        points={creativityHistory.map((metrics, index) => {
-                          const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                          const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                          const y = (1 - dependency) * 80 + 10;
-                          return `${x},${y}`;
-                        }).join(' ')}
-                        fill="none"
-                        stroke="#f97316"
-                        strokeWidth="2.5"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                      {creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 96 + 4;
-                        const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                        const y = (1 - dependency) * 80 + 10;
-                        return (
-                          <circle
-                            key={`dependency-${index}`}
-                            cx={x}
-                            cy={y}
-                            r="3.5"
-                            fill="#f97316"
-                            stroke="white"
-                            strokeWidth="1.5"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        );
-                      })}
-                    </svg>
-                  </div>
-                )}
+                        const y = 90 - (dependency * 80);
+                        return `${x},${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke="#f97316"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {creativityHistory.map((metrics, index) => {
+                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
+                      const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
+                      const y = 90 - (dependency * 80);
+                      return (
+                        <circle
+                          key={`dependency-${index}`}
+                          cx={x}
+                          cy={y}
+                          r="3.5"
+                          fill="#f97316"
+                          stroke="white"
+                          strokeWidth="2"
+                          opacity="0.9"
+                        />
+                      );
+                    })}
+                  </svg>
+                </div>
 
                 {/* Legend and Metrics */}
                 <div className="flex items-center justify-between mt-3 relative">
@@ -2661,49 +2978,117 @@ Note: "keyword" should be a concise 2-5 word phrase that captures the essence of
 
         </div>
 
-        <div className="w-96 bg-white border-l border-gray-200 overflow-y-auto p-4 relative">
-          <div className="flex items-center gap-2 mb-4">
-            <Lightbulb className="text-yellow-500" size={24} />
-            <h2 className="text-xl font-bold text-gray-800">Reflections</h2>
-          </div>
+        {/* Reflection Sidebar Toggle Button (when closed) */}
+        {!isReflectionSidebarOpen && reflections.length > 0 && (
+          <button
+            onClick={() => setIsReflectionSidebarOpen(true)}
+            className="fixed top-4 right-4 z-50 w-12 h-12 bg-white rounded-lg shadow-lg border-2 border-yellow-300 flex items-center justify-center hover:bg-yellow-50 transition-all hover:scale-105 relative"
+            title="Open Reflections"
+          >
+            <Lightbulb className="text-yellow-600" size={24} />
+            {/* Alert badge */}
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center border-2 border-white">
+              <AlertCircle size={12} className="text-white" />
+            </div>
+          </button>
+        )}
 
-          {reflections.length === 0 ? (
-            <div className="text-center text-gray-400 mt-8">
-              <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Generate ideas to see reflections here</p>
+        {/* Reflection Sidebar */}
+        {isReflectionSidebarOpen && (
+          <div className="w-96 bg-white border-l border-gray-200 overflow-y-auto p-4 relative flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="text-yellow-500" size={24} />
+                <h2 className="text-xl font-bold text-gray-800">Reflections</h2>
+              </div>
+              <button
+                onClick={() => setIsReflectionSidebarOpen(false)}
+                className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                title="Close Reflections"
+              >
+                <ChevronRight size={20} className="text-gray-500" />
+              </button>
             </div>
-          ) : (
-            <div className="space-y-3 pb-96">
-              {reflections.map(reflection => (
-                <div
-                  key={reflection.id}
-                  onClick={() => handleReflectionClick(reflection.nodeId)}
-                  className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 shadow-sm border border-yellow-200 relative cursor-pointer hover:shadow-md transition-shadow"
-                >
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteReflection(reflection.id);
-                    }}
-                    className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors"
-                    title="Delete"
-                  >
-                    <X size={16} className="text-gray-500" />
-                  </button>
-                  <div className="mb-2">
-                    <h3 className="font-semibold text-gray-800 text-sm mb-1 pr-6">
-                      {reflection.topic}
-                    </h3>
-                    <p className="text-xs text-gray-500">{reflection.timestamp}</p>
-                  </div>
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    {reflection.content}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+
+            {reflections.length === 0 ? (
+              <div className="text-center text-gray-400 mt-8">
+                <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Generate ideas to see reflections here</p>
+              </div>
+            ) : (
+              <div className="space-y-3 pb-96">
+                {reflections.map(reflection => {
+                  const isExpanded = expandedReflectionId === reflection.id;
+
+                  // Get color scheme based on type
+                  const getTypeStyle = (type) => {
+                    switch (type) {
+                      case 'critic':
+                        return {
+                          bg: 'bg-gradient-to-br from-red-50 to-orange-50',
+                          border: 'border-red-200',
+                          title: 'Critical Question',
+                          titleColor: 'text-red-700'
+                        };
+                      case 'advice':
+                        return {
+                          bg: 'bg-gradient-to-br from-blue-50 to-cyan-50',
+                          border: 'border-blue-200',
+                          title: 'Strategic Advice',
+                          titleColor: 'text-blue-700'
+                        };
+                      default:
+                        return {
+                          bg: 'bg-gradient-to-br from-yellow-50 to-orange-50',
+                          border: 'border-yellow-200',
+                          title: 'Reflection',
+                          titleColor: 'text-gray-700'
+                        };
+                    }
+                  };
+
+                  const typeStyle = getTypeStyle(reflection.type);
+
+                  return (
+                    <div
+                      key={reflection.id}
+                      onClick={() => handleReflectionClick(reflection.id, reflection.nodeId)}
+                      className={`${typeStyle.bg} rounded-lg p-4 shadow-sm border ${typeStyle.border} relative cursor-pointer hover:shadow-md transition-all`}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteReflection(reflection.id);
+                        }}
+                        className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors z-10"
+                        title="Delete"
+                      >
+                        <X size={16} className="text-gray-500" />
+                      </button>
+                      <div className="pr-6">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-semibold ${typeStyle.titleColor} uppercase tracking-wide`}>
+                            {typeStyle.title}
+                          </span>
+                        </div>
+                        <h3 className="font-semibold text-gray-800 text-sm mb-1">
+                          {reflection.title || reflection.topic}
+                        </h3>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {reflection.content}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
