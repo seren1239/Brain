@@ -1,7 +1,17 @@
 // Vercel Serverless Function for Anthropic API proxy
 // This file should be in /api/anthropic.js for Vercel Functions
 
+// Vercel Functions use Node.js runtime
+// For Node.js 18+, fetch is built-in
+
 export default async function handler(req, res) {
+    console.log('API request received:', {
+        method: req.method,
+        url: req.url,
+        hasBody: !!req.body,
+        envKeyExists: !!process.env.ANTHROPIC_API_KEY
+    });
+
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -22,11 +32,15 @@ export default async function handler(req, res) {
 
         if (!apiKey) {
             console.error('ANTHROPIC_API_KEY is not set!');
+            console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('ANTHROPIC')));
             return res.status(500).json({
                 error: 'ANTHROPIC_API_KEY is not set in server environment',
-                hint: 'Please set ANTHROPIC_API_KEY in Vercel environment variables'
+                hint: 'Please set ANTHROPIC_API_KEY in Vercel environment variables',
+                availableEnvVars: Object.keys(process.env).filter(k => k.includes('ANTHROPIC'))
             });
         }
+
+        console.log('Making request to Anthropic API...');
 
         const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
@@ -38,15 +52,34 @@ export default async function handler(req, res) {
             body: JSON.stringify(req.body),
         });
 
+        // Check if response is ok before parsing
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error('Anthropic API error:', response.status, errorData);
+            return res.status(response.status).json({
+                error: 'Anthropic API request failed',
+                status: response.status,
+                details: errorData
+            });
+        }
+
         const data = await response.json();
 
-        if (!response.ok) {
-            return res.status(response.status).json(data);
+        // Ensure response has the expected structure
+        if (!data || !data.content) {
+            console.error('Unexpected response format:', data);
+            return res.status(500).json({
+                error: 'Unexpected response format from Anthropic API',
+                data: data
+            });
         }
 
         res.json(data);
     } catch (error) {
         console.error('Proxy error:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({
+            error: error.message || 'Internal server error',
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 }

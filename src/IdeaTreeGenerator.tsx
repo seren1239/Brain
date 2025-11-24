@@ -6,7 +6,7 @@ import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximiz
 // In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
 const API_URL = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.DEV ? 'http://localhost:3001/api/anthropic' : '/api/anthropic');
 
-function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
+function CircleNode({ node, pos, size, color, isSelected, onSelect, onMouseDown, onClick = null }) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -17,11 +17,25 @@ function CircleNode({ node, pos, size, color, isSelected, onSelect }) {
         top: `${pos.y - size / 2}px`,
         width: `${size}px`,
         height: `${size}px`,
-        zIndex: isHovered || isSelected ? 10 : 2
+        zIndex: isHovered || isSelected ? 10 : 2,
+        cursor: onMouseDown ? 'move' : 'pointer'
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      onClick={onSelect}
+      onMouseDown={(e) => {
+        if (onMouseDown) {
+          onMouseDown(e, node);
+        }
+      }}
+      onClick={(e) => {
+        // If onClick prop is provided, use it (for structure mode)
+        if (onClick) {
+          onClick(e);
+        } else if (onSelect && !onMouseDown) {
+          // Otherwise, use onSelect if no onMouseDown
+          onSelect();
+        }
+      }}
     >
       <div
         className="w-full h-full rounded-full cursor-pointer transition-all"
@@ -72,6 +86,7 @@ export default function IdeaTreeGenerator() {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [selectedStructureNode, setSelectedStructureNode] = useState(null);
+  const [structureSelectedNodeIds, setStructureSelectedNodeIds] = useState(new Set()); // Store node IDs used for structure analysis
   const [currentStep, setCurrentStep] = useState(1); // Track current exploration step
   const [designTopic, setDesignTopic] = useState(''); // Store the initial design topic
   const [topicNodeId, setTopicNodeId] = useState(null); // Store the TOPIC node ID
@@ -128,6 +143,20 @@ export default function IdeaTreeGenerator() {
         setStructureReflections(data.structureReflections || []);
         setDesignTopic(data.designTopic || '');
         setTopicNodeId(data.topicNodeId || null);
+        // Restore structure selected node IDs if saved
+        if (data.structureSelectedNodeIds && Array.isArray(data.structureSelectedNodeIds)) {
+          setStructureSelectedNodeIds(new Set(data.structureSelectedNodeIds));
+        } else if (data.hierarchyAnalysis && data.hierarchyAnalysis.analysis) {
+          // Fallback: restore from hierarchyAnalysis if structureSelectedNodeIds not saved
+          const nodeIds = new Set(data.hierarchyAnalysis.analysis.map(a => a.nodeId));
+          setStructureSelectedNodeIds(nodeIds);
+        } else {
+          setStructureSelectedNodeIds(new Set());
+        }
+        // Restore structure grid positions if saved
+        if (data.structureGridPositions && typeof data.structureGridPositions === 'object') {
+          setStructureGridPositions(data.structureGridPositions);
+        }
 
         // Determine current step from nodes
         if (data.nodes && data.nodes.length > 0) {
@@ -171,6 +200,23 @@ export default function IdeaTreeGenerator() {
     };
   }, []);
 
+  // State to force re-render when returning to structure mode
+  const [structureModeKey, setStructureModeKey] = useState(0);
+
+  // Effect to force position recalculation when returning to structure mode
+  // This ensures positions are recalculated after DOM is fully rendered
+  useEffect(() => {
+    if (mode === 'structure' && hierarchyAnalysis) {
+      // Use a key-based approach to force re-render after DOM is ready
+      const timeoutId = setTimeout(() => {
+        // Increment key to force re-render of structure mode components
+        setStructureModeKey(prev => prev + 1);
+      }, 200); // Increased delay to ensure DOM is fully ready
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [mode, hierarchyAnalysis]); // Run when mode or hierarchyAnalysis changes
+
   useEffect(() => {
     const dataToSave = {
       nodes,
@@ -182,10 +228,12 @@ export default function IdeaTreeGenerator() {
       structureReflections,
       currentStep,
       designTopic,
-      topicNodeId
+      topicNodeId,
+      structureSelectedNodeIds: Array.from(structureSelectedNodeIds),
+      structureGridPositions
     };
     localStorage.setItem('ideaTreeData', JSON.stringify(dataToSave));
-  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId]);
+  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId, structureSelectedNodeIds]);
 
   // Calculate Creativity Index using TTCT + Dependency Framework
   const calculateCreativityIndex = () => {
@@ -247,9 +295,13 @@ export default function IdeaTreeGenerator() {
     // Final formula: CI' = 0.25F + 0.25X + 0.30O + 0.20E – 0.20D
     const creativity = (0.25 * fluency) + (0.25 * flexibility) + (0.30 * originality) + (0.20 * elaboration) - (0.20 * dependency);
 
+    // Ensure Creativity + Dependency = 100 (Dependency = 100 - Creativity)
+    const normalizedCreativity = Math.max(0, Math.min(1, creativity));
+    const normalizedDependency = 1 - normalizedCreativity; // Dependency = 100 - Creativity
+
     return {
-      creativity: Math.max(0, Math.min(1, creativity)),
-      dependency: Math.max(0, Math.min(1, dependency)),
+      creativity: normalizedCreativity,
+      dependency: normalizedDependency,
       fluency,
       flexibility,
       originality,
@@ -270,6 +322,31 @@ export default function IdeaTreeGenerator() {
     const words = text.trim().split(/\s+/);
     if (words.length <= 4) return text;
     return words.slice(0, 3).join(' ');
+  };
+
+  // Get text to display based on node size (to prevent overflow)
+  const getDisplayText = (text, nodeSize, isSelected) => {
+    if (!text) return '';
+
+    // 노드 크기에 따라 표시할 최대 글자 수 결정
+    // 작은 노드일수록 더 짧게 자르기
+    let maxLength;
+    if (nodeSize <= 80) {
+      // insight, opportunity 노드
+      maxLength = isSelected ? 30 : 12;
+    } else if (nodeSize <= 100) {
+      // sub 노드
+      maxLength = isSelected ? 40 : 15;
+    } else if (nodeSize <= 120) {
+      // main 노드
+      maxLength = isSelected ? 50 : 20;
+    } else {
+      // topic 노드
+      maxLength = isSelected ? 60 : 25;
+    }
+
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength) + '...';
   };
 
   // Handle Start Exploration from Landing Page
@@ -367,6 +444,23 @@ Note:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -375,7 +469,7 @@ Note:
       setAiGenerationCount(newAiCount);
 
       const newNodes = parsed.nodes.map((nodeObj, index) => {
-        const nodeId = Date.now() + index;
+        const nodeId = Date.now() + index * 10000 + Math.floor(Math.random() * 1000);
 
         // Create reflections if provided (critic, advice)
         const reflectionTypes = [
@@ -396,6 +490,22 @@ Note:
           }
         });
 
+        // Calculate initial position with collision detection during creation only
+        const parentNode = nodes.find(n => n.id === parentTopicId);
+        const parentPos = parentNode ? getNodePosition(parentNode) : { x: 400, y: 200 };
+        const spacing = 150;
+        const totalNodes = parsed.nodes.length;
+        const centerOffset = (totalNodes - 1) * spacing / 2;
+        const baseX = parentPos.x + (index * spacing) - centerOffset;
+        const baseY = parentPos.y + 120;
+
+        // Apply collision detection only during initial creation
+        const nodeSize = 120; // main node size
+        const allExistingNodes = nodes.filter(n => n.id !== nodeId);
+        const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
+        const initialX = adjustedPos.x;
+        const initialY = adjustedPos.y;
+
         return {
           id: nodeId,
           text: nodeObj.text,
@@ -404,8 +514,8 @@ Note:
           step: 1,
           category: nodeObj.category,
           parentId: parentTopicId, // Connect to TOPIC node
-          x: 300 + (index * 250),
-          y: 250, // Below TOPIC node
+          x: initialX,
+          y: initialY,
           level: 1,
           manuallyPositioned: false
         };
@@ -485,6 +595,23 @@ Note:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -492,11 +619,12 @@ Note:
       const newAiCount = aiGenerationCount + 1;
       setAiGenerationCount(newAiCount);
 
+      // Get parent position (will be calculated by getNodePosition)
       const parentPos = getNodePosition(parentNode);
       const siblings = nodes.filter(n => n.parentId === parentNode.id);
 
       const newNodes = parsed.subNodes.map((subNodeObj, index) => {
-        const nodeId = Date.now() + index;
+        const nodeId = Date.now() + index * 10000 + Math.floor(Math.random() * 1000);
 
         // Create reflections if provided (critic, advice)
         const reflectionTypes = [
@@ -517,6 +645,20 @@ Note:
           }
         });
 
+        // Calculate initial position with collision detection during creation only
+        const spacing = 130;
+        const siblingCount = parsed.subNodes.length;
+        const centerOffset = (siblingCount - 1) * spacing / 2;
+        const baseX = parentPos.x + (index * spacing) - centerOffset;
+        const baseY = parentPos.y + 120;
+
+        // Apply collision detection only during initial creation
+        const nodeSize = 100; // sub node size
+        const allExistingNodes = nodes.filter(n => n.id !== nodeId);
+        const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
+        const initialX = adjustedPos.x;
+        const initialY = adjustedPos.y;
+
         return {
           id: nodeId,
           text: subNodeObj.text,
@@ -525,8 +667,8 @@ Note:
           step: 2,
           category: parentNode.category,
           parentId: parentNode.id,
-          x: parentPos.x + (index - 1) * 200,
-          y: parentPos.y + 150,
+          x: initialX,
+          y: initialY,
           level: 1,
           manuallyPositioned: false
         };
@@ -620,6 +762,23 @@ Note:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -627,10 +786,12 @@ Note:
       const newAiCount = aiGenerationCount + 1;
       setAiGenerationCount(newAiCount);
 
+      // Get parent position (will be calculated by getNodePosition)
       const parentPos = getNodePosition(parentNode);
+      const siblingCount = parsed.insights.length;
 
       const newNodes = parsed.insights.map((insightObj, index) => {
-        const nodeId = Date.now() + index;
+        const nodeId = Date.now() + index * 10000 + Math.floor(Math.random() * 1000);
 
         // Create reflections if provided (critic, advice)
         const reflectionTypes = [
@@ -651,6 +812,20 @@ Note:
           }
         });
 
+        // Calculate initial position (will be adjusted by getNodePosition for collision avoidance)
+        // Calculate initial position with collision detection during creation only
+        const spacing = 110;
+        const centerOffset = (siblingCount - 1) * spacing / 2;
+        const baseX = parentPos.x + (index * spacing) - centerOffset;
+        const baseY = parentPos.y + 120;
+
+        // Apply collision detection only during initial creation
+        const nodeSize = 90; // insight node size
+        const allExistingNodes = nodes.filter(n => n.id !== nodeId);
+        const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
+        const initialX = adjustedPos.x;
+        const initialY = adjustedPos.y;
+
         return {
           id: nodeId,
           text: insightObj.text,
@@ -659,8 +834,8 @@ Note:
           step: 3,
           category: parentNode.category,
           parentId: parentNode.id,
-          x: parentPos.x + (index - 1) * 200,
-          y: parentPos.y + 150,
+          x: initialX,
+          y: initialY,
           level: 2,
           manuallyPositioned: false
         };
@@ -757,6 +932,23 @@ Note:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -764,10 +956,12 @@ Note:
       const newAiCount = aiGenerationCount + 1;
       setAiGenerationCount(newAiCount);
 
+      // Get parent position (will be calculated by getNodePosition)
       const parentPos = getNodePosition(parentNode);
+      const siblingCount = parsed.opportunities.length;
 
       const newNodes = parsed.opportunities.map((oppObj, index) => {
-        const nodeId = Date.now() + index;
+        const nodeId = Date.now() + index * 10000 + Math.floor(Math.random() * 1000);
 
         // Create reflections if provided (critic, advice)
         const reflectionTypes = [
@@ -788,6 +982,20 @@ Note:
           }
         });
 
+        // Calculate initial position (will be adjusted by getNodePosition for collision avoidance)
+        // Calculate initial position with collision detection during creation only
+        const spacing = 100;
+        const centerOffset = (siblingCount - 1) * spacing / 2;
+        const baseX = parentPos.x + (index * spacing) - centerOffset;
+        const baseY = parentPos.y + 120;
+
+        // Apply collision detection only during initial creation
+        const nodeSize = 80; // opportunity node size
+        const allExistingNodes = nodes.filter(n => n.id !== nodeId);
+        const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
+        const initialX = adjustedPos.x;
+        const initialY = adjustedPos.y;
+
         return {
           id: nodeId,
           text: oppObj.text,
@@ -796,8 +1004,8 @@ Note:
           step: 4,
           category: parentNode.category,
           parentId: parentNode.id,
-          x: parentPos.x + (index - 1) * 200,
-          y: parentPos.y + 150,
+          x: initialX,
+          y: initialY,
           level: 3,
           manuallyPositioned: false
         };
@@ -991,6 +1199,23 @@ JSON-ONLY OUTPUT FORMAT
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -1012,6 +1237,55 @@ JSON-ONLY OUTPUT FORMAT
       });
       setStructureReflections(newStructureReflections);
 
+      // Pre-calculate initial positions for all nodes ONLY if this is a NEW structure analysis
+      // Check if we already have positions for these nodes (preserving existing structure)
+      const existingPositions = parsed.analysis.filter(analysis =>
+        structureGridPositions[analysis.nodeId]
+      );
+
+      // Only calculate initial positions if this is a new structure (no existing positions)
+      if (existingPositions.length === 0) {
+        // Use setTimeout to ensure DOM is ready after mode change
+        setTimeout(() => {
+          const graphContainer = document.getElementById('structure-graph-container');
+          if (graphContainer) {
+            const graphWidth = 800;
+            const graphHeight = 600;
+            const margin = 100;
+            const initialPositions = {};
+
+            parsed.analysis.forEach(analysis => {
+              const clampedFeasibility = Math.max(1, Math.min(10, analysis.feasibility || 5));
+              const clampedImpact = Math.max(1, Math.min(10, analysis.impact || 5));
+
+              // Calculate position within graph bounds (relative to graph container)
+              const availableWidth = graphWidth - 2 * margin;
+              const availableHeight = graphHeight - 2 * margin;
+
+              const graphX = margin + ((clampedFeasibility - 1) / 9) * availableWidth;
+              const graphY = (graphHeight - margin) - ((clampedImpact - 1) / 9) * availableHeight;
+
+              // Clamp to graph bounds
+              const clampedGraphX = Math.max(margin, Math.min(graphWidth - margin, graphX));
+              const clampedGraphY = Math.max(margin, Math.min(graphHeight - margin, graphY));
+
+              initialPositions[analysis.nodeId] = {
+                x: clampedGraphX,
+                y: clampedGraphY
+              };
+            });
+
+            setStructureGridPositions(initialPositions);
+          }
+        }, 100);
+      }
+      // If positions already exist, they will be preserved and used in getStructuredPosition
+
+      // Store selected node IDs for structure mode display (before clearing selection)
+      setStructureSelectedNodeIds(new Set(selectedForStructure));
+
+      // Clear selection after storing for structure mode
+      setSelectedForStructure(new Set());
       setMode('structure');
     } catch (err) {
       console.error('Analysis error:', err);
@@ -1072,7 +1346,7 @@ JSON-ONLY OUTPUT FORMAT
 
   const handleEditSave = () => {
     setNodes(prev => prev.map(n =>
-      n.id === editingNode ? { ...n, text: editValue } : n
+      n.id === editingNode ? { ...n, text: editValue, edited: true } : n
     ));
 
     const newEditCount = editCount + 1;
@@ -1166,6 +1440,23 @@ Respond ONLY in JSON format:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
@@ -1282,12 +1573,29 @@ Note:
       });
 
       const data = await response.json();
+
+      // Check if response has error
+      if (data.error) {
+        console.error('API error:', data);
+        alert(`API Error: ${data.error}${data.hint ? '\n' + data.hint : ''}`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if response has content
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        console.error('Unexpected response format:', data);
+        alert('Unexpected response format from API. Please check the console for details.');
+        setLoading(false);
+        return;
+      }
+
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
 
       const existingMainNodes = nodes.filter(n => n.type === 'main' && n.step === 1);
-      const nodeId = Date.now();
+      const nodeId = Date.now() + Math.floor(Math.random() * 10000);
 
       // Create reflections if provided (critic, advice)
       const reflectionTypes = [
@@ -1308,6 +1616,15 @@ Note:
         }
       });
 
+      // Calculate initial position (will be adjusted by getNodePosition during rendering for collision avoidance)
+      // For main nodes, position them relative to existing main nodes or center
+      const topicNode = nodes.find(n => n.type === 'topic');
+      const topicPos = topicNode ? getNodePosition(topicNode) : { x: 400, y: 200 };
+      const spacing = 150;
+      const centerOffset = (existingMainNodes.length * spacing) / 2;
+      const initialX = topicPos.x + (existingMainNodes.length * spacing) - centerOffset;
+      const initialY = topicPos.y + 120;
+
       const newNode = {
         id: nodeId,
         text: parsed.text,
@@ -1315,9 +1632,9 @@ Note:
         type: 'main',
         step: 1,
         category: category,
-        parentId: null,
-        x: 200 + (existingMainNodes.length * 250),
-        y: 200,
+        parentId: topicNode?.id || null,
+        x: initialX,
+        y: initialY,
         level: 0,
         manuallyPositioned: false
       };
@@ -1366,6 +1683,7 @@ Note:
     setEditCount(0);
     setAiGenerationCount(0);
     setSelectedForStructure(new Set());
+    setStructureSelectedNodeIds(new Set());
     setHierarchyAnalysis(null);
     setCurrentStep(1);
     setDesignTopic('');
@@ -1546,51 +1864,212 @@ Note:
     const mouseX = e.clientX - containerRect.left + scrollLeft;
     const mouseY = e.clientY - containerRect.top + scrollTop;
 
-    const newX = mouseX - dragOffset.x;
-    const newY = mouseY - dragOffset.y;
-
     if (mode === 'structure') {
-      const gridSize = 250;
-      const rowHeight = 200;
+      // Convert screen position to graph position (within graph bounds)
+      const graphContainer = document.getElementById('structure-graph-container');
+      if (!graphContainer) return;
 
-      const gridX = Math.round(newX / gridSize) * gridSize;
-      const gridY = Math.round(newY / rowHeight) * rowHeight;
+      const graphRect = graphContainer.getBoundingClientRect();
+      const graphWidth = 800;
+      const graphHeight = 600;
+      const margin = 100;
+      const nodeRadius = 8;
 
-      let priority = 'medium';
-      if (gridY < 200) priority = 'high';
-      else if (gridY >= 400) priority = 'low';
+      // Calculate new node center position in screen coordinates
+      // offset was calculated as: e.clientX - nodeCenterX, so nodeCenterX = e.clientX - offset
+      const nodeCenterScreenX = e.clientX - dragOffset.x;
+      const nodeCenterScreenY = e.clientY - dragOffset.y;
 
+      // Convert screen coordinates to graph container relative coordinates
+      const graphRelativeX = nodeCenterScreenX - graphRect.left;
+      const graphRelativeY = nodeCenterScreenY - graphRect.top;
+
+      // Clamp to graph bounds
+      const clampedX = Math.max(margin, Math.min(graphWidth - margin, graphRelativeX));
+      const clampedY = Math.max(margin, Math.min(graphHeight - margin, graphRelativeY));
+
+      // Convert position to impact and feasibility scores (1-10)
+      const availableWidth = graphWidth - 2 * margin;
+      const availableHeight = graphHeight - 2 * margin;
+
+      // Feasibility: x position → 1 (left) to 10 (right)
+      const feasibility = 1 + ((clampedX - margin) / availableWidth) * 9;
+
+      // Impact: y position → 10 (top) to 1 (bottom)
+      const impact = 10 - ((clampedY - margin) / availableHeight) * 9;
+
+      // Round to 1 decimal place and clamp to 1-10
+      const roundedFeasibility = Math.max(1, Math.min(10, Math.round(feasibility * 10) / 10));
+      const roundedImpact = Math.max(1, Math.min(10, Math.round(impact * 10) / 10));
+
+      // Update hierarchyAnalysis with new impact and feasibility values
+      if (hierarchyAnalysis) {
+        setHierarchyAnalysis(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            analysis: prev.analysis.map(a =>
+              a.nodeId === draggingNode
+                ? { ...a, impact: roundedImpact, feasibility: roundedFeasibility }
+                : a
+            )
+          };
+        });
+      }
+
+      // Store the position (relative to graph container)
       setStructureGridPositions(prev => ({
         ...prev,
-        [draggingNode]: { x: gridX, y: gridY, priority }
+        [draggingNode]: { x: clampedX, y: clampedY }
       }));
 
       setNodes(prev => prev.map(n =>
         n.id === draggingNode
-          ? { ...n, x: gridX, y: gridY, structurePositioned: true }
+          ? { ...n, x: clampedX, y: clampedY, structurePositioned: true, structureAdjusted: true }
           : n
       ));
-    } else {
-      setNodes(prev => prev.map(n =>
-        n.id === draggingNode
-          ? {
-            ...n,
-            x: Math.max(0, newX),
-            y: Math.max(0, newY),
-            manuallyPositioned: true
-          }
-          : n
-      ));
+      return; // Early return for structure mode
     }
+
+    // Exploration mode: use container-relative coordinates
+    const newX = mouseX - dragOffset.x;
+    const newY = mouseY - dragOffset.y;
+
+    setNodes(prev => prev.map(n =>
+      n.id === draggingNode
+        ? {
+          ...n,
+          x: Math.max(0, newX),
+          y: Math.max(0, newY),
+          manuallyPositioned: true
+        }
+        : n
+    ));
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e) => {
+    // Check if it was a click (not a drag) in structure mode
+    if (draggingNode && mode === 'structure') {
+      const movedDistance = Math.sqrt(
+        Math.pow((e?.clientX || mouseDownPos.x) - mouseDownPos.x, 2) +
+        Math.pow((e?.clientY || mouseDownPos.y) - mouseDownPos.y, 2)
+      );
+      // If moved less than 5px, treat it as a click and select the node
+      if (movedDistance < 5) {
+        setSelectedStructureNode(draggingNode);
+      }
+    }
+
     setDraggingNode(null);
     setIsPanning(false);
     setMouseDownPos({ x: 0, y: 0 });
   };
 
+  // Helper function to check if two nodes overlap
+  const checkNodeCollision = (pos1, size1, pos2, size2, minDistance = 20) => {
+    const distance = Math.sqrt(Math.pow(pos1.x - pos2.x, 2) + Math.pow(pos1.y - pos2.y, 2));
+    const minRequiredDistance = (size1 / 2) + (size2 / 2) + minDistance;
+    return distance < minRequiredDistance;
+  };
+
+  // Helper function to find a non-colliding position using spiral search
+  const findNonCollidingPosition = (initialPos, nodeSize, existingNodes, excludedNodeId = null) => {
+    let currentPos = { ...initialPos };
+    let spiralRadius = 0;
+    let angle = 0;
+    const maxAttempts = 100;
+    let attempts = 0;
+    const minDistance = 20;
+
+    // Get node size function for other nodes
+    const getOtherNodeSize = (otherNode) => {
+      if (otherNode.type === 'topic') return 140;
+      if (otherNode.type === 'main') return 120;
+      if (otherNode.type === 'sub') return 100;
+      if (otherNode.type === 'insight') return 90;
+      return 80; // opportunity or default
+    };
+
+    // Helper to get node position directly from stored values (avoid recursion)
+    const getStoredNodePosition = (otherNode) => {
+      if (!otherNode) return { x: 400, y: 300 };
+      // Use stored position if available, otherwise calculate from parent
+      if (otherNode.manuallyPositioned && otherNode.x !== undefined && otherNode.y !== undefined) {
+        return { x: otherNode.x, y: otherNode.y };
+      }
+      if (otherNode.x !== undefined && otherNode.y !== undefined) {
+        return { x: otherNode.x, y: otherNode.y };
+      }
+      // Fallback: calculate from parent if parent exists
+      const parentId = otherNode.parentIds ? otherNode.parentIds[0] : otherNode.parentId;
+      if (parentId) {
+        const parent = nodes.find(n => n.id === parentId);
+        if (parent) {
+          const parentPos = getStoredNodePosition(parent);
+          const spacing = otherNode.type === 'main' ? 150 : otherNode.type === 'sub' ? 130 : 110;
+          const siblings = nodes.filter(n => {
+            const nParentId = n.parentIds ? n.parentIds[0] : n.parentId;
+            return nParentId === parentId;
+          });
+          const index = siblings.findIndex(n => n.id === otherNode.id);
+          return {
+            x: parentPos.x + (index - 1) * spacing,
+            y: parentPos.y + 120
+          };
+        }
+      }
+      return { x: otherNode.x || 400, y: otherNode.y || 300 };
+    };
+
+    while (attempts < maxAttempts) {
+      let hasCollision = false;
+
+      // Check collision with all existing nodes
+      for (const otherNode of existingNodes) {
+        if (excludedNodeId && otherNode.id === excludedNodeId) continue;
+
+        // Use stored position directly to avoid recursion
+        const otherNodePos = getStoredNodePosition(otherNode);
+        const otherNodeSize = getOtherNodeSize(otherNode);
+
+        if (checkNodeCollision(currentPos, nodeSize, otherNodePos, otherNodeSize, minDistance)) {
+          hasCollision = true;
+          break;
+        }
+      }
+
+      if (!hasCollision) {
+        return currentPos;
+      }
+
+      // Spiral search: increase radius and angle
+      attempts++;
+      if (attempts % 8 === 0) {
+        spiralRadius += 30;
+        angle = 0;
+      } else {
+        angle += Math.PI / 4; // 45 degrees
+      }
+
+      currentPos = {
+        x: initialPos.x + spiralRadius * Math.cos(angle),
+        y: initialPos.y + spiralRadius * Math.sin(angle)
+      };
+    }
+
+    // If no position found, return a position far away
+    return {
+      x: initialPos.x + 500,
+      y: initialPos.y + 500
+    };
+  };
+
   const getNodePosition = (node) => {
+    // Safety check: if node is undefined or null, return default position
+    if (!node) {
+      return { x: 400, y: 300 };
+    }
+
     // If node has been manually positioned (dragged), use that position
     if (node.manuallyPositioned) {
       return { x: node.x, y: node.y };
@@ -1598,10 +2077,10 @@ Note:
 
     // Use first parentId if multiple parents exist
     const parentId = node.parentIds ? node.parentIds[0] : node.parentId;
-    if (!parentId) return { x: node.x, y: node.y };
+    if (!parentId) return { x: node.x || 400, y: node.y || 300 };
 
     const parent = nodes.find(n => n.id === parentId);
-    if (!parent) return { x: node.x, y: node.y };
+    if (!parent) return { x: node.x || 400, y: node.y || 300 };
 
     const siblings = nodes.filter(n => {
       const nParentId = n.parentIds ? n.parentIds[0] : n.parentId;
@@ -1612,10 +2091,19 @@ Note:
 
     // Adjust spacing for circular nodes
     const spacing = node.type === 'main' ? 150 : node.type === 'sub' ? 130 : 110;
-    return {
+    const basePosition = {
       x: parentPos.x + (index - 1) * spacing,
       y: parentPos.y + 120
     };
+
+    // If node already has a position set, use it (no collision detection after initial creation)
+    // Collision detection only happens during initial node creation, not during rendering or drag
+    if (node.x !== undefined && node.y !== undefined) {
+      return { x: node.x, y: node.y };
+    }
+
+    // This should not happen in normal flow, but return base position as fallback
+    return basePosition;
   };
 
   const renderConnections = () => {
@@ -1706,89 +2194,94 @@ Note:
   };
 
   if (mode === 'structure') {
-    const selectedNodes = nodes.filter(n => selectedForStructure.has(n.id));
+    // Use stored node IDs from structure analysis, not current selection
+    const selectedNodes = nodes.filter(n => structureSelectedNodeIds.has(n.id));
 
     const getStructuredPosition = (node) => {
       if (!hierarchyAnalysis) return { x: 0, y: 0 };
 
-      // Use grid position if node has been dragged
+      // Helper function to calculate offset from graph container to parent container
+      const calculateOffset = () => {
+        const graphContainer = document.getElementById('structure-graph-container');
+        if (!graphContainer) return { x: 0, y: 0 };
+
+        // Get the parent container (the .overflow-auto div)
+        const parentContainer = graphContainer.closest('.overflow-auto');
+        if (parentContainer) {
+          const parentRect = parentContainer.getBoundingClientRect();
+          const graphRect = graphContainer.getBoundingClientRect();
+          // Calculate offset considering scroll position
+          const scrollLeft = parentContainer.scrollLeft || 0;
+          const scrollTop = parentContainer.scrollTop || 0;
+          return {
+            x: (graphRect.left - parentRect.left) + scrollLeft,
+            y: (graphRect.top - parentRect.top) + scrollTop
+          };
+        }
+        // Fallback: try parentElement
+        if (graphContainer.parentElement) {
+          const parentRect = graphContainer.parentElement.getBoundingClientRect();
+          const graphRect = graphContainer.getBoundingClientRect();
+          return {
+            x: graphRect.left - parentRect.left,
+            y: graphRect.top - parentRect.top
+          };
+        }
+        return { x: 0, y: 0 };
+      };
+
+      // Priority 1: Use grid position if it exists (preserves user-adjusted or initial positions)
       if (structureGridPositions[node.id]) {
-        return structureGridPositions[node.id];
+        // structureGridPositions stores graph-relative coordinates
+        // Convert to parent container coordinates by adding offset
+        const offset = calculateOffset();
+        return {
+          x: structureGridPositions[node.id].x + offset.x,
+          y: structureGridPositions[node.id].y + offset.y
+        };
       }
 
-      // Use stored position if node has been positioned before
+      // Priority 2: Use stored position if node has been positioned before
       if (node.structurePositioned && node.x !== undefined && node.y !== undefined) {
-        return { x: node.x, y: node.y };
+        const offset = calculateOffset();
+        return {
+          x: node.x + offset.x,
+          y: node.y + offset.y
+        };
       }
 
       const analysis = hierarchyAnalysis.analysis.find(a => a.nodeId === node.id);
       if (!analysis) return { x: 0, y: 0 };
 
       // Position based on Impact (Y-axis) and Feasibility (X-axis)
-      // Impact: 1-10 (low to high) → Y position (bottom to top)
-      // Feasibility: 1-10 (low to high) → X position (left to right)
-      // Quadrants:
-      // - Top-left (y < 300, x < 400): Big Bets (High Impact, Low Feasibility)
-      // - Top-right (y < 300, x >= 400): Quick Wins (High Impact, High Feasibility)
-      // - Bottom-left (y >= 300, x < 400): Maybe Later (Low Impact, Low Feasibility)
-      // - Bottom-right (y >= 300, x >= 400): Fill-ins (Low Impact, High Feasibility)
-
       const graphWidth = 800;
       const graphHeight = 600;
-      const nodeRadius = 8; // Node radius in pixels
-      const margin = 100 + nodeRadius; // Add node radius to margin to prevent clipping
+      const nodeRadius = 8;
+      const margin = 100; // Match the margin used in grid rendering
 
-      // Clamp values to 1-10 range to ensure they stay within bounds
+      // Clamp values to 1-10 range
       const clampedFeasibility = Math.max(1, Math.min(10, analysis.feasibility || 5));
       const clampedImpact = Math.max(1, Math.min(10, analysis.impact || 5));
 
-      // Calculate position within graph bounds (0-800 for x, 0-600 for y)
+      // Calculate position within graph bounds (relative to graph container)
       // X-axis: feasibility maps from left (1) to right (10)
-      // - feasibility = 1 → x = margin (left)
-      // - feasibility = 5.5 → x = graphWidth/2 (center)
-      // - feasibility = 10 → x = graphWidth - margin (right)
       const availableWidth = graphWidth - 2 * margin;
       const graphX = margin + ((clampedFeasibility - 1) / 9) * availableWidth;
 
       // Y-axis: impact maps from bottom (1) to top (10)
-      // - impact = 1 → y = graphHeight - margin (bottom)
-      // - impact = 5.5 → y = graphHeight/2 (center)
-      // - impact = 10 → y = margin (top)
       const availableHeight = graphHeight - 2 * margin;
       const graphY = (graphHeight - margin) - ((clampedImpact - 1) / 9) * availableHeight;
 
-      // Final clamp to ensure position is within graph bounds (accounting for node size)
-      const clampedGraphX = Math.max(nodeRadius, Math.min(graphWidth - nodeRadius, graphX));
-      const clampedGraphY = Math.max(nodeRadius, Math.min(graphHeight - nodeRadius, graphY));
+      // Clamp to graph bounds (graph-relative coordinates)
+      const clampedGraphX = Math.max(margin, Math.min(graphWidth - margin, graphX));
+      const clampedGraphY = Math.max(margin, Math.min(graphHeight - margin, graphY));
 
-      // The graph container is centered using flex, so we need to calculate its offset
-      // The graph is centered, so its top-left corner is at:
-      // containerWidth/2 - graphWidth/2 for x
-      // containerHeight/2 - graphHeight/2 for y
-      // Since we can't easily get container dimensions, we'll use a ref or calculate on render
-      // For now, assume the graph is centered and add the offset
-      // The parent container uses flex items-center justify-center which centers the graph
-      // We need to get the actual offset, but since we can't, we'll use a useEffect to calculate it
-
-      // Calculate graph container offset (this will be recalculated when container resizes)
-      const graphContainer = document.getElementById('structure-graph-container');
-      if (graphContainer && graphContainer.parentElement) {
-        const parentRect = graphContainer.parentElement.getBoundingClientRect();
-        const graphRect = graphContainer.getBoundingClientRect();
-        const offsetX = graphRect.left - parentRect.left;
-        const offsetY = graphRect.top - parentRect.top;
-
-        return {
-          x: clampedGraphX + offsetX,
-          y: clampedGraphY + offsetY
-        };
-      }
-
-      // Fallback: assume graph is centered (50% - half of graph size)
-      // This is approximate but should work if container is reasonably sized
+      // Convert graph-relative coordinates to parent container coordinates
+      // Use the same offset calculation helper
+      const offset = calculateOffset();
       return {
-        x: clampedGraphX,
-        y: clampedGraphY
+        x: clampedGraphX + offset.x,
+        y: clampedGraphY + offset.y
       };
     };
 
@@ -1915,10 +2408,10 @@ Note:
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            {!hierarchyAnalysis ? (
+            {analyzingStructure || !hierarchyAnalysis ? (
               <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
                 <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
-                  <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></div>
+                  <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
                   <p className="text-gray-700 font-semibold text-lg">Analyzing structure...</p>
                   <p className="text-gray-500 text-sm">Please wait</p>
                 </div>
@@ -1928,29 +2421,97 @@ Note:
                 {/* 2x2 Matrix Background */}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div id="structure-graph-container" className="relative" style={{ width: '800px', height: '600px' }}>
-                    {/* Quadrants */}
-                    <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300">
+                    {/* Quadrants - Background layer */}
+                    <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
                       <div className="absolute top-2 left-2 text-xs font-semibold text-yellow-700">Big Bets</div>
                       <div className="absolute bottom-2 right-2 text-xs text-gray-400">High Impact, Low Feasibility</div>
                     </div>
-                    <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l-2 border-b-2 border-gray-300">
+                    <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
                       <div className="absolute top-2 right-2 text-xs font-semibold text-green-700">Quick Wins</div>
                       <div className="absolute bottom-2 left-2 text-xs text-gray-400">High Impact, High Feasibility</div>
                     </div>
-                    <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r-2 border-t-2 border-gray-300">
+                    <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
                       <div className="absolute bottom-2 left-2 text-xs font-semibold text-gray-600">Maybe Later</div>
                       <div className="absolute top-2 right-2 text-xs text-gray-400">Low Impact, Low Feasibility</div>
                     </div>
-                    <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l-2 border-t-2 border-gray-300">
+                    <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
                       <div className="absolute bottom-2 right-2 text-xs font-semibold text-blue-700">Fill-ins</div>
                       <div className="absolute top-2 left-2 text-xs text-gray-400">Low Impact, High Feasibility</div>
                     </div>
 
+                    {/* Grid Lines and Score Labels - Overlay on top of quadrants */}
+                    <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 1, width: '800px', height: '600px' }}>
+                      {/* Vertical grid lines (Feasibility: 1-10) */}
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
+                        const graphWidth = 800;
+                        const graphHeight = 600;
+                        const margin = 100;
+                        const availableWidth = graphWidth - 2 * margin;
+                        const x = margin + ((score - 1) / 9) * availableWidth;
+                        return (
+                          <g key={`v-${score}`}>
+                            <line
+                              x1={x}
+                              y1={0}
+                              x2={x}
+                              y2={graphHeight}
+                              stroke="#e2e8f0"
+                              strokeWidth={1}
+                              strokeDasharray="4,4"
+                            />
+                            {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
+                            {(score % 2 === 1 || score === 10) && (
+                              <text
+                                x={x}
+                                y={graphHeight + 25}
+                                textAnchor="middle"
+                                className="text-xs fill-gray-600 font-medium"
+                              >
+                                {score}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
+                      {/* Horizontal grid lines (Impact: 1-10) */}
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
+                        const graphWidth = 800;
+                        const graphHeight = 600;
+                        const margin = 100;
+                        const availableHeight = graphHeight - 2 * margin;
+                        const y = (graphHeight - margin) - ((score - 1) / 9) * availableHeight;
+                        return (
+                          <g key={`h-${score}`}>
+                            <line
+                              x1={0}
+                              y1={y}
+                              x2={graphWidth}
+                              y2={y}
+                              stroke="#e2e8f0"
+                              strokeWidth={1}
+                              strokeDasharray="4,4"
+                            />
+                            {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
+                            {(score % 2 === 1 || score === 10) && (
+                              <text
+                                x={-20}
+                                y={y + 4}
+                                textAnchor="middle"
+                                className="text-xs fill-gray-600 font-medium"
+                              >
+                                {score}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
+                    </svg>
+
                     {/* Axis Labels */}
-                    <div className="absolute -left-16 top-1/2 transform -translate-y-1/2 -rotate-90 text-sm font-semibold text-gray-700">
+                    <div className="absolute -left-16 top-1/2 transform -translate-y-1/2 -rotate-90 text-sm font-semibold text-gray-700" style={{ zIndex: 2 }}>
                       Impact →
                     </div>
-                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-8 text-sm font-semibold text-gray-700">
+                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-8 text-sm font-semibold text-gray-700" style={{ zIndex: 2 }}>
                       Feasibility →
                     </div>
                   </div>
@@ -1971,13 +2532,67 @@ Note:
 
                   return (
                     <CircleNode
-                      key={node.id}
+                      key={`${node.id}-${structureModeKey}`}
                       node={node}
                       pos={pos}
                       size={size}
                       color={color}
                       isSelected={isSelected}
                       onSelect={() => setSelectedStructureNode(node.id)}
+                      onMouseDown={(e, node) => {
+                        // Structure mode: enable dragging and select the node
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        // Select the node immediately when mouse down (for info display)
+                        setSelectedStructureNode(node.id);
+
+                        // Get the actual rendered position of the node (screen coordinates)
+                        // Use the actual DOM element's position, not the calculated position
+                        const nodeElement = e.currentTarget;
+                        const nodeRect = nodeElement.getBoundingClientRect();
+                        const nodeCenterX = nodeRect.left + nodeRect.width / 2;
+                        const nodeCenterY = nodeRect.top + nodeRect.height / 2;
+
+                        // Calculate offset from actual rendered node center to mouse position
+                        // This ensures drag starts from where the node is actually displayed
+                        const offsetX = e.clientX - nodeCenterX;
+                        const offsetY = e.clientY - nodeCenterY;
+
+                        // Also update the structureGridPositions to match the actual rendered position
+                        // This ensures future drags start from the correct position
+                        const graphContainer = document.getElementById('structure-graph-container');
+                        if (graphContainer) {
+                          const graphRect = graphContainer.getBoundingClientRect();
+                          // Convert screen coordinates to graph container relative coordinates
+                          const graphRelativeX = nodeCenterX - graphRect.left;
+                          const graphRelativeY = nodeCenterY - graphRect.top;
+
+                          // CRITICAL: Update structureGridPositions with the ACTUAL rendered position
+                          // This ensures getStructuredPosition will use the correct position next render
+                          setStructureGridPositions(prev => ({
+                            ...prev,
+                            [node.id]: { x: graphRelativeX, y: graphRelativeY }
+                          }));
+
+                          // Also update the node's stored position to match the actual rendered position
+                          setNodes(prev => prev.map(n =>
+                            n.id === node.id
+                              ? { ...n, x: graphRelativeX, y: graphRelativeY, structurePositioned: true }
+                              : n
+                          ));
+                        }
+
+                        setDragOffset({ x: offsetX, y: offsetY });
+                        setDraggingNode(node.id);
+                        setMouseDownPos({ x: e.clientX, y: e.clientY });
+                      }}
+                      onClick={(e) => {
+                        // Also handle click for selection (backup in case onMouseDown doesn't fire)
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedStructureNode(node.id);
+                      }}
                     />
                   );
                 })}
@@ -2107,25 +2722,6 @@ Note:
           </div>
         </div>
 
-        {hierarchyAnalysis && (
-          <div className="bg-white border-t p-4">
-            <div className="max-w-6xl mx-auto">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  <span className="font-semibold">{selectedNodes.length}</span> ideas structured across{' '}
-                  <span className="font-semibold">{hierarchyAnalysis.mainThemes.length}</span> themes
-                </div>
-                <div className="flex gap-2">
-                  {hierarchyAnalysis.mainThemes.slice(0, 4).map((theme, idx) => (
-                    <span key={idx} className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold">
-                      {theme}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -2179,50 +2775,367 @@ Note:
 
         <div className="flex-1 overflow-auto p-6">
           {/* Overview Tab */}
-          {activeTab === 'overview' && (
-            <div className="space-y-6">
-              <p className="text-gray-600">Overview content will be displayed here.</p>
-            </div>
-          )}
+          {activeTab === 'overview' && (() => {
+            // Calculate comprehensive TTCT scores for AI vs Human
+            const calculateTTCTScores = (nodeList) => {
+              if (nodeList.length === 0) {
+                return { fluency: 0, flexibility: 0, originality: 0, elaboration: 0 };
+              }
+
+              // Fluency: number of ideas (normalized)
+              const maxExpectedNodes = 100;
+              const fluency = Math.min(nodeList.length / maxExpectedNodes, 1);
+
+              // Flexibility: variety of categories
+              const uniqueTypes = new Set(nodeList.map(n => n.type));
+              const flexibility = uniqueTypes.size / 4; // max 4 types
+
+              // Originality: novelty (semantic similarity)
+              const calculateSimilarity = (text1, text2) => {
+                if (!text1 || !text2) return 0;
+                const words1 = new Set(text1.toLowerCase().split(/\s+/));
+                const words2 = new Set(text2.toLowerCase().split(/\s+/));
+                const intersection = new Set([...words1].filter(w => words2.has(w)));
+                const union = new Set([...words1, ...words2]);
+                return union.size > 0 ? intersection.size / union.size : 0;
+              };
+
+              let totalSimilarity = 0;
+              let comparisonCount = 0;
+              for (let i = 0; i < nodeList.length; i++) {
+                for (let j = i + 1; j < nodeList.length; j++) {
+                  totalSimilarity += calculateSimilarity(nodeList[i].text, nodeList[j].text);
+                  comparisonCount++;
+                }
+              }
+              const avgSimilarity = comparisonCount > 0 ? totalSimilarity / comparisonCount : 0;
+              const originality = 1 - avgSimilarity;
+
+              // Elaboration: depth and linkage
+              const edges = nodeList.filter(n => n.parentId || (n.parentIds && n.parentIds.length > 0)).length;
+              const density = nodeList.length > 0 ? edges / nodeList.length : 0;
+              const avgLength = nodeList.length > 0
+                ? nodeList.reduce((sum, n) => sum + (n.text?.length || 0), 0) / nodeList.length
+                : 0;
+              const maxExpectedLength = 100;
+              const lengthScore = Math.min(avgLength / maxExpectedLength, 1);
+              const elaboration = (density * 0.5) + (lengthScore * 0.5);
+
+              return {
+                fluency: Math.max(0, Math.min(1, fluency)),
+                flexibility: Math.max(0, Math.min(1, flexibility)),
+                originality: Math.max(0, Math.min(1, originality)),
+                elaboration: Math.max(0, Math.min(1, elaboration))
+              };
+            };
+
+            // Separate AI and Human nodes
+            // AI nodes: generated by AI without any user interaction
+            // Human nodes: any node that has been interacted with by the user:
+            //   - Edited (text changed)
+            //   - Manually created (Add button)
+            //   - Manually positioned (dragged in exploration mode)
+            //   - Adjusted in structure mode (impact/feasibility changed via drag)
+            //   - Or if structureGridPositions exists (user dragged in structure mode)
+            const aiNodes = nodes.filter(n => {
+              const hasUserInteraction =
+                n.manuallyCreated ||
+                n.edited ||
+                n.manuallyPositioned ||
+                n.structureAdjusted ||
+                structureGridPositions[n.id]; // Dragged in structure mode
+              return !hasUserInteraction;
+            });
+            const humanNodes = nodes.filter(n => {
+              return n.manuallyCreated ||
+                n.edited ||
+                n.manuallyPositioned ||
+                n.structureAdjusted ||
+                structureGridPositions[n.id]; // Dragged in structure mode
+            });
+
+            // If no human nodes, consider all nodes as AI
+            const effectiveHumanNodes = humanNodes.length > 0 ? humanNodes : [];
+            const effectiveAiNodes = aiNodes.length > 0 ? aiNodes : nodes;
+
+            // Calculate scores
+            const aiScores = calculateTTCTScores(effectiveAiNodes);
+            const humanScores = calculateTTCTScores(effectiveHumanNodes);
+
+            // Determine strengths
+            const getStrengths = (scores) => {
+              const strengths = [];
+              if (scores.flexibility > 0.7) strengths.push('Flexibility');
+              if (scores.originality > 0.7) strengths.push('Originality');
+              if (scores.fluency > 0.7) strengths.push('Fluency');
+              if (scores.elaboration > 0.7) strengths.push('Elaboration');
+              return strengths.length > 0 ? strengths.join(' & ') : 'Balanced';
+            };
+
+            const aiStrengths = getStrengths(aiScores);
+            const humanStrengths = getStrengths(humanScores);
+
+            // Generate insight
+            const generateInsight = () => {
+              if (humanScores.originality > aiScores.originality && humanScores.flexibility > aiScores.flexibility) {
+                return "Your originality and flexibility scores are higher than AI contributions, indicating strong creative independence.";
+              } else if (humanScores.originality > aiScores.originality) {
+                return "Your originality score is higher than AI contributions, showing unique creative thinking.";
+              } else if (humanScores.flexibility > aiScores.flexibility) {
+                return "Your flexibility score is higher than AI contributions, demonstrating diverse perspectives.";
+              } else if (aiScores.fluency > humanScores.fluency && aiScores.elaboration > humanScores.elaboration) {
+                return "AI contributions excel in fluency and elaboration, providing a strong foundation for your creative process.";
+              } else {
+                return "Your creative process shows a balanced collaboration between human insight and AI assistance.";
+              }
+            };
+
+            return (
+              <div className="space-y-8">
+                {/* Two Column Layout */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Left: TTCT Creativity Dimensions - Radar Chart */}
+                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">TTCT Creativity Dimensions</h3>
+                    <div className="relative h-80 flex items-center justify-center">
+                      <svg width="300" height="300" viewBox="0 0 300 300" className="absolute">
+                        {/* Grid circles */}
+                        {[25, 50, 75, 100].map((radius) => (
+                          <circle
+                            key={radius}
+                            cx="150"
+                            cy="150"
+                            r={radius * 1.5}
+                            fill="none"
+                            stroke="#e5e7eb"
+                            strokeWidth="1"
+                            strokeDasharray="2,2"
+                          />
+                        ))}
+
+                        {/* Axes - 4 axes evenly distributed */}
+                        {[
+                          { label: 'Fluency', angle: -90 },
+                          { label: 'Flexibility', angle: 0 },
+                          { label: 'Originality', angle: 90 },
+                          { label: 'Elaboration', angle: 180 }
+                        ].map((axis, idx) => {
+                          const angle = (axis.angle * Math.PI) / 180;
+                          const x = 150 + 150 * Math.cos(angle);
+                          const y = 150 + 150 * Math.sin(angle);
+                          return (
+                            <g key={axis.label}>
+                              <line
+                                x1="150"
+                                y1="150"
+                                x2={x}
+                                y2={y}
+                                stroke="#d1d5db"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={x + (x > 150 ? 10 : x < 150 ? -10 : 0)}
+                                y={y + (y > 150 ? 15 : y < 150 ? -5 : 0)}
+                                fontSize="12"
+                                fill="#6b7280"
+                                textAnchor={x > 150 ? 'start' : x < 150 ? 'end' : 'middle'}
+                                fontWeight="500"
+                              >
+                                {axis.label}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {/* AI Polygon (pink) */}
+                        <polygon
+                          points={[
+                            `${150 + aiScores.fluency * 150 * Math.cos(-90 * Math.PI / 180)},${150 + aiScores.fluency * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                            `${150 + aiScores.flexibility * 150 * Math.cos(0 * Math.PI / 180)},${150 + aiScores.flexibility * 150 * Math.sin(0 * Math.PI / 180)}`,
+                            `${150 + aiScores.originality * 150 * Math.cos(90 * Math.PI / 180)},${150 + aiScores.originality * 150 * Math.sin(90 * Math.PI / 180)}`,
+                            `${150 + aiScores.elaboration * 150 * Math.cos(180 * Math.PI / 180)},${150 + aiScores.elaboration * 150 * Math.sin(180 * Math.PI / 180)}`
+                          ].join(' ')}
+                          fill="#ec4899"
+                          fillOpacity="0.3"
+                          stroke="#ec4899"
+                          strokeWidth="2"
+                        />
+
+                        {/* Human Polygon (purple) */}
+                        {effectiveHumanNodes.length > 0 && (
+                          <polygon
+                            points={[
+                              `${150 + humanScores.fluency * 150 * Math.cos(-90 * Math.PI / 180)},${150 + humanScores.fluency * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                              `${150 + humanScores.flexibility * 150 * Math.cos(0 * Math.PI / 180)},${150 + humanScores.flexibility * 150 * Math.sin(0 * Math.PI / 180)}`,
+                              `${150 + humanScores.originality * 150 * Math.cos(90 * Math.PI / 180)},${150 + humanScores.originality * 150 * Math.sin(90 * Math.PI / 180)}`,
+                              `${150 + humanScores.elaboration * 150 * Math.cos(180 * Math.PI / 180)},${150 + humanScores.elaboration * 150 * Math.sin(180 * Math.PI / 180)}`
+                            ].join(' ')}
+                            fill="#8b5cf6"
+                            fillOpacity="0.3"
+                            stroke="#8b5cf6"
+                            strokeWidth="2"
+                          />
+                        )}
+                      </svg>
+                    </div>
+                    <div className="flex items-center justify-center gap-4 mt-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-pink-500"></div>
+                        <span className="text-sm text-gray-700">AI</span>
+                      </div>
+                      {effectiveHumanNodes.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded bg-purple-500"></div>
+                          <span className="text-sm text-gray-700">Human</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-4 bg-purple-50 rounded-lg p-4">
+                      <p className="text-sm text-gray-700">{generateInsight()}</p>
+                    </div>
+                  </div>
+
+                  {/* Right: Side-by-Side Comparison - Bar Chart */}
+                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Side-by-Side Comparison</h3>
+                    <div className="h-80 flex flex-col justify-between">
+                      {['fluency', 'flexibility', 'originality', 'elaboration'].map((dimension, idx) => {
+                        const aiValue = aiScores[dimension] * 100;
+                        const humanValue = effectiveHumanNodes.length > 0 ? humanScores[dimension] * 100 : 0;
+                        const dimensionLabel = dimension.charAt(0).toUpperCase() + dimension.slice(1);
+                        return (
+                          <div key={dimension} className="flex items-center gap-4">
+                            <div className="w-24 text-sm text-gray-600 font-medium">{dimensionLabel}</div>
+                            <div className="flex-1 flex items-center gap-3">
+                              {/* AI Bar */}
+                              <div className="flex-1 h-10 bg-gray-100 rounded relative overflow-hidden">
+                                <div
+                                  className="h-full bg-pink-500 rounded flex items-center justify-end pr-2"
+                                  style={{ width: `${aiValue}%` }}
+                                >
+                                  <span className="text-xs font-semibold text-white">{Math.round(aiValue)}%</span>
+                                </div>
+                                {aiValue < 10 && (
+                                  <div className="absolute inset-0 flex items-center justify-start pl-2">
+                                    <span className="text-xs font-semibold text-gray-700">{Math.round(aiValue)}%</span>
+                                  </div>
+                                )}
+                              </div>
+                              {/* Human Bar */}
+                              {effectiveHumanNodes.length > 0 ? (
+                                <div className="flex-1 h-10 bg-gray-100 rounded relative overflow-hidden">
+                                  <div
+                                    className="h-full bg-purple-500 rounded flex items-center justify-end pr-2"
+                                    style={{ width: `${humanValue}%` }}
+                                  >
+                                    <span className="text-xs font-semibold text-white">{Math.round(humanValue)}%</span>
+                                  </div>
+                                  {humanValue < 10 && (
+                                    <div className="absolute inset-0 flex items-center justify-start pl-2">
+                                      <span className="text-xs font-semibold text-gray-700">{Math.round(humanValue)}%</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex-1 h-10 bg-gray-100 rounded flex items-center justify-center">
+                                  <span className="text-xs text-gray-400">No human data</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-center gap-4 mt-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-pink-500"></div>
+                        <span className="text-sm text-gray-700">AI</span>
+                      </div>
+                      {effectiveHumanNodes.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded bg-purple-500"></div>
+                          <span className="text-sm text-gray-700">Human</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <div className="bg-purple-50 rounded-lg p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs">👤</div>
+                          <span className="text-sm font-semibold text-gray-800">Your Strength</span>
+                        </div>
+                        <p className="text-xs text-gray-600">{humanStrengths}</p>
+                      </div>
+                      <div className="bg-pink-50 rounded-lg p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-6 h-6 rounded-full bg-pink-500 flex items-center justify-center text-white text-xs">✨</div>
+                          <span className="text-sm font-semibold text-gray-800">AI Strength</span>
+                        </div>
+                        <p className="text-xs text-gray-600">{aiStrengths}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Understanding TTCT Dimensions */}
+                <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4">Understanding TTCT Dimensions</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-800 mb-2">Fluency</h4>
+                      <p className="text-sm text-gray-600">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-800 mb-2">Flexibility</h4>
+                      <p className="text-sm text-gray-600">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-800 mb-2">Originality</h4>
+                      <p className="text-sm text-gray-600">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-800 mb-2">Elaboration</h4>
+                      <p className="text-sm text-gray-600">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Timeline Tab */}
           {activeTab === 'timeline' && (
             <>
               {/* Large Graph */}
               <div className="bg-gray-50 rounded-lg p-8 mb-6">
-                <div className="relative h-96">
-                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    {/* Grid lines */}
-                    {[0, 25, 50, 75, 100].map((y) => (
-                      <line
-                        key={`grid-${y}`}
-                        x1="5"
-                        y1={5 + (y * 0.9)}
-                        x2="95"
-                        y2={5 + (y * 0.9)}
-                        stroke="#e5e7eb"
-                        strokeWidth="0.5"
-                        strokeDasharray="2,2"
-                      />
-                    ))}
+                <div className="relative h-[500px]">
+                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+                    {/* Background grid pattern (same as Creative Flow Timeline) */}
+                    <defs>
+                      <pattern id="timeline-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
+                      </pattern>
+                    </defs>
+                    <rect width="100" height="100" fill="url(#timeline-grid)" />
 
-                    {/* Creativity line (green) */}
+                    {/* Creativity line (green) - same calculation as Creative Flow Timeline */}
                     <polyline
                       points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 90 + 5;
+                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                         const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                        const y = 5 + (1 - creativity) * 90;
+                        const y = 90 - (creativity * 80);
                         return `${x},${y}`;
                       }).join(' ')}
                       fill="none"
                       stroke="#10b981"
-                      strokeWidth="3"
-                      vectorEffect="non-scaling-stroke"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
                     {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 90 + 5;
+                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                       const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                      const y = 5 + (1 - creativity) * 90;
+                      const y = 90 - (creativity * 80);
                       return (
                         <g key={`creativity-detail-${index}`}>
                           <circle
@@ -2232,12 +3145,12 @@ Note:
                             fill="#10b981"
                             stroke="white"
                             strokeWidth="2"
-                            vectorEffect="non-scaling-stroke"
+                            opacity="0.9"
                           />
                           <text
                             x={x}
-                            y={y - 8}
-                            fontSize="6"
+                            y={y - 6}
+                            fontSize="4.5"
                             fill="#10b981"
                             textAnchor="middle"
                             fontWeight="bold"
@@ -2248,23 +3161,24 @@ Note:
                       );
                     })}
 
-                    {/* Dependency line (orange) */}
+                    {/* Dependency line (orange) - same calculation as Creative Flow Timeline */}
                     <polyline
                       points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 90 + 5;
+                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                         const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                        const y = 5 + (1 - dependency) * 90;
+                        const y = 90 - (dependency * 80);
                         return `${x},${y}`;
                       }).join(' ')}
                       fill="none"
                       stroke="#f97316"
-                      strokeWidth="3"
-                      vectorEffect="non-scaling-stroke"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
                     {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 90 + 5;
+                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
                       const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                      const y = 5 + (1 - dependency) * 90;
+                      const y = 90 - (dependency * 80);
                       return (
                         <g key={`dependency-detail-${index}`}>
                           <circle
@@ -2274,12 +3188,12 @@ Note:
                             fill="#f97316"
                             stroke="white"
                             strokeWidth="2"
-                            vectorEffect="non-scaling-stroke"
+                            opacity="0.9"
                           />
                           <text
                             x={x}
-                            y={y + 12}
-                            fontSize="6"
+                            y={y + 8}
+                            fontSize="4.5"
                             fill="#f97316"
                             textAnchor="middle"
                             fontWeight="bold"
@@ -2504,22 +3418,69 @@ Note:
               {/* Divider */}
               <div className="w-px h-8 bg-gray-300"></div>
 
-              {/* Structure Mode Button */}
+              {/* Structure Mode Button - Go to existing structure if available */}
               <button
-                onClick={analyzeHierarchy}
-                disabled={analyzingStructure || selectedForStructure.size < 2}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${selectedForStructure.size >= 2
-                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md animate-pulse'
-                  : 'hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed'
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // Only allow navigation if hierarchyAnalysis exists
+                  if (!hierarchyAnalysis) {
+                    return; // Do nothing if no structure exists
+                  }
+                  // If hierarchyAnalysis exists, just switch to structure mode
+                  // Position recalculation will be handled by useEffect
+                  setMode('structure');
+                }}
+                disabled={!hierarchyAnalysis}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${hierarchyAnalysis
+                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md hover:scale-105 active:scale-95 cursor-pointer'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
                   }`}
-                title={selectedForStructure.size >= 2 ? `Go to Structure Mode (${selectedForStructure.size} selected)` : 'Select at least 2 nodes to analyze'}
+                title={hierarchyAnalysis ? 'Go to Structure Mode' : 'No structure available. Generate structure first using "Generate Structure" button.'}
               >
                 <LayoutGrid size={18} />
                 <span>Structure Mode</span>
-                {selectedForStructure.size >= 2 && (
-                  <span className="ml-1 px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full">
-                    {selectedForStructure.size}
-                  </span>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-8 bg-gray-300"></div>
+
+              {/* Generate Structure Button */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // Add click animation
+                  e.currentTarget.style.transform = 'scale(0.95)';
+                  setTimeout(() => {
+                    e.currentTarget.style.transform = '';
+                  }, 150);
+                  analyzeHierarchy();
+                }}
+                disabled={analyzingStructure || selectedForStructure.size < 2}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${selectedForStructure.size >= 2 && !analyzingStructure
+                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md animate-pulse hover:scale-105 active:scale-95'
+                  : analyzingStructure
+                    ? 'bg-purple-200 text-purple-800 shadow-lg cursor-wait'
+                    : 'hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                title={analyzingStructure ? 'Analyzing structure...' : selectedForStructure.size >= 2 ? `Generate Structure (${selectedForStructure.size} selected)` : 'Select at least 2 nodes to generate structure'}
+              >
+                {analyzingStructure ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Analyzing...</span>
+                  </>
+                ) : (
+                  <>
+                    <LayoutGrid size={18} />
+                    <span>Generate Structure</span>
+                    {selectedForStructure.size >= 2 && (
+                      <span className="ml-1 px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full">
+                        {selectedForStructure.size}
+                      </span>
+                    )}
+                  </>
                 )}
               </button>
 
@@ -2572,6 +3533,7 @@ Note:
             const nodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
             const buttonRadius = (nodeSize / 2) + 10; // 버튼들이 노드 주변에 배치될 반경 (더 가깝게)
             const hoverAreaSize = nodeSize + (buttonRadius * 2) + 20; // Hover 영역 확장
+            const clickAreaSize = nodeSize + 10; // 클릭 영역을 노드 크기보다 약간 크게 (겹치는 노드 구분)
 
             return (
               <div
@@ -2614,10 +3576,11 @@ Note:
                     left: '50%',
                     top: '50%',
                     transform: 'translate(-50%, -50%)',
-                    width: `${nodeSize}px`,
-                    height: `${nodeSize}px`,
+                    width: `${clickAreaSize}px`,
+                    height: `${clickAreaSize}px`,
                     cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : (isDragging ? 'grabbing' : 'grab'),
-                    pointerEvents: 'auto'
+                    pointerEvents: 'auto',
+                    zIndex: isSelected || hoveredNodeId === node.id ? 20 : 1
                   }}
                 >
                   {isEditing ? (
@@ -2687,15 +3650,48 @@ Note:
                             </span>
                           )}
                           <div
-                            className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center"
+                            className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center px-2 py-1"
+                            style={{
+                              maxWidth: '100%',
+                              overflow: isSelected ? 'auto' : 'hidden',
+                              wordBreak: 'break-word'
+                            }}
                           >
-                            <p className={`break-words ${node.type === 'topic' ? 'text-sm font-bold' : node.type === 'main' ? 'text-xs font-semibold' : 'text-xs'} text-gray-700 leading-tight`}>
-                              {node.keyword || extractKeyword(node.text)}
+                            {/* 키워드 - 선택되지 않은 노드에서는 말줄임표, 선택된 노드에서는 전체 */}
+                            <p
+                              className={`break-words text-gray-700 leading-tight font-semibold ${node.type === 'topic' ? 'text-sm' : node.type === 'main' ? 'text-xs' : 'text-xs'}`}
+                              style={{
+                                maxWidth: '100%',
+                                overflow: isSelected ? 'visible' : 'hidden',
+                                lineHeight: '1.3',
+                                display: isSelected ? 'block' : '-webkit-box',
+                                WebkitLineClamp: isSelected ? undefined : 1,
+                                WebkitBoxOrient: isSelected ? 'initial' : 'vertical',
+                                wordBreak: 'break-word'
+                              }}
+                              title={!isSelected ? (node.keyword || extractKeyword(node.text)) : undefined}
+                            >
+                              {isSelected
+                                ? (node.keyword || extractKeyword(node.text))
+                                : getDisplayText(node.keyword || extractKeyword(node.text), nodeSize, false)
+                              }
                             </p>
+                            {/* 상세 텍스트 - 선택된 노드에서만 표시, 전체 내용을 여러 줄로 표시 */}
                             {isSelected && (
-                              <p className={`break-words mt-1 text-[10px] text-gray-600 leading-tight`}>
+                              <div
+                                className="break-words text-gray-600 leading-tight mt-1 text-[10px] w-full"
+                                style={{
+                                  maxWidth: '100%',
+                                  lineHeight: '1.4',
+                                  wordBreak: 'break-word',
+                                  maxHeight: `${Math.max(40, nodeSize * 0.5)}px`,
+                                  overflowY: 'auto',
+                                  overflowX: 'hidden',
+                                  paddingRight: '2px'
+                                }}
+                              >
                                 {node.text}
-                              </p>
+                              </div>
                             )}
                           </div>
                         </div>

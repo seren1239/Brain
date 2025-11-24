@@ -38,10 +38,26 @@ Vercel에서는 상대 경로 `/api/anthropic` 사용 (자동으로 Vercel Funct
 
 ### 4. 문제 해결
 
-**API 호출 실패 시:**
-1. Vercel Dashboard에서 `ANTHROPIC_API_KEY` 환경 변수 확인
-2. Vercel Functions 로그 확인 (Dashboard → Functions)
-3. 브라우저 콘솔에서 네트워크 에러 확인
+**API 호출 실패 시 (500 에러):**
+1. **Vercel Dashboard에서 환경 변수 확인**
+   - Settings → Environment Variables
+   - `ANTHROPIC_API_KEY`가 설정되어 있는지 확인
+   - 모든 환경(Production, Preview, Development)에 적용되었는지 확인
+
+2. **Vercel Functions 로그 확인**
+   - Vercel Dashboard → 프로젝트 → Functions 탭
+   - `/api/anthropic` 함수 클릭
+   - 로그에서 에러 메시지 확인
+   - 특히 `ANTHROPIC_API_KEY is not set` 에러가 있는지 확인
+
+3. **브라우저 콘솔 확인**
+   - 개발자 도구(F12) → Console 탭
+   - 네트워크 탭에서 `/api/anthropic` 요청 확인
+   - 응답 내용 확인
+
+4. **재배포**
+   - 환경 변수 변경 후 반드시 재배포 필요
+   - Vercel Dashboard에서 "Redeploy" 클릭
 
 **로컬에서 테스트:**
 ```bash
