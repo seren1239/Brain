@@ -75,3 +75,29 @@ body {
     stroke-dasharray: 1000;
     animation: lineDraw 0.8s ease-out forwards;
 }
+
+@keyframes fadeInScale {
+    0% {
+        r: 0;
+        opacity: 0;
+    }
+
+    50% {
+        r: 4.5;
+    }
+
+    100% {
+        r: 3.5;
+        opacity: 1;
+    }
+}
+
+@keyframes lineGrow {
+    0% {
+        stroke-dashoffset: var(--path-length, 1000);
+    }
+
+    100% {
+        stroke-dashoffset: 0;
+    }
+}

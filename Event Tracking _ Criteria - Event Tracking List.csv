@@ -1,0 +1,32 @@
+Field Name,Type,Description
+event_id,string,The unique ID of this event.
+actor,"enum(""HUMAN"",""AI"")",Who triggered the action.
+mode,"enum(""exploration"",""structure"")",Which mode this event occurred in.
+event_type,enum（see list below）,"Event types:
+Initial Input
+Create Node
+Edit Node
+Delete Node
+Move Node (within Structure Mode)
+Move Node (within-boundary)
+Move Node (cross-boundary)"
+raw_content,string,The original content of the node.
+new_content,string,The content of the node after editing.
+node_id,string,The unique ID of the node.
+node_ids_involved,array/null,Node IDs involved in a combined-node operation.
+semantic_total_score,number,Total semantic score calculated across all six semantic dimensions.
+semantic_generative_score,number,"0–3 range, see rubric for details."
+semantic_blending_score,number,"0–3 range, see rubric for details."
+semantic_reframing_score,number,"0–3 range, see rubric for details."
+semantic_evaluation_score,number,"0–3 range, see rubric for details."
+semantic_constraint_score,number,"0–3 range, see rubric for details."
+semantic_domain_score,number,"0–3 range, see rubric for details."
+semantic_input_score,number,"0–3 range, see rubric for details."
+semantic_delete_score,number,"0–3 range, see rubric for details."
+semantic_selection_score,number,"0–3 range, see rubric for details."
+semantic_move_score_small,number,"0–3 range, see rubric for details."
+semantic_move_score_big,number,"0–3 range, see rubric for details."
+human_score_total,number,Total semantic score for HUMAN actions.
+ai_score_total,number,Total semantic score for AI actions.
+curve_human_ratio,number,HUMAN score / (HUMAN score + AI score); value from 0–1.
+curve_ai_ratio,number,AI score / (HUMAN score + AI score); value from 0–1.

@@ -1,0 +1,26 @@
+"The evaluation measures not the behavior itself (e.g., generating, editing, or moving nodes), but the degree to which that behavior alters the “semantic space” (idea space).
+A score of 0 indicates no semantic change; scores from 1 to 3 reflect increasing levels of semantic impact, ranging from minor local adjustments to fundamental reframing.",,,,,,
+Field Name,Type,Description,Criteria Dimension,What Counts,Example,Rubric
+semantic_total_score,number,Total semantic score calculated across all six semantic dimensions.,/,"semantic_total_score=semantic_generative_score+semantic_blending_score+semantic_reframing_score+semantic_evaluation_score+semantic_constraint_score+  semantic_domain_score
+",,
+semantic_generative_score,number,"0–3 range, see rubric for details.",Generative Expansion,Whether new nodes or idea directions were added,"AI：generated 5 new directions
+Human：manually added a new node"," 0 = no new idea
+ 1 = adds 1 small new idea
+ 2 = adds 2–3 distinct ideas
+ 3 = adds >3 diverse ideas"
+semantic_blending_score,number,"0–3 range, see rubric for details.",Conceptual Blending,Whether concepts were blended to produce new combined ideas,AI：combined two nodes and created a new one," 0 = no blending
+ 1 = superficial linkage
+ 2 = clear cross-domain analogy
+ 3 = strong conceptual fusion creating new structure"
+semantic_reframing_score,number,"0–3 range, see rubric for details.",Reframing,"Whether the problem was reframed by changing perspectives, direction, or underlying assumptions","AI：generated content that shifted the problem direction
+Human：edited AI content to shift the direction",0 = no reframing; 1 = minor adjustment; 2 = clear shift in perspective or assumption; 3 = full redefinition of the problem
+semantic_evaluation_score,number,"0–3 range, see rubric for details.",Evaluation,"Whether evaluative actions were taken, such as judgment, critique, deletion, or prioritization (e.g., AI generating a critical card; user deleting or editing nodes)","AI：generated a critical card
+Human：deleted certain nodes",0 = no evaluation; 1 = light preference/judgment; 2 = explicit critique or deletion; 3 = strong evaluative decision that changes direction
+semantic_constraint_score,number,"0–3 range, see rubric for details.",Constraint Setting,Whether constraints were added or the design scope was narrowed,human：added constraints while editing a node,0 = no constraint; 1 = small constraint; 2 = moderate narrowing of scope; 3 = strong constraint that determines feasibility
+semantic_domain_score,number,"0–3 range, see rubric for details.",Domain Knowledge,"Whether real-world knowledge, detail, or contextual information was added","AI：generated more detailed node content
+Human：enriched node content with specific contextual details",0 = no domain knowledge; 1 = light contextual detail; 2 = moderate contextualization or process detail; 3 = deep professional or industry knowledge
+semantic_input_score,number,"0–3 range, see rubric for details.",/,"Whether the original user input includes details about users, design problems, or contextual specifics",,0 = minimal input; 1 = basic task description; 2 = problem statement with context; 3 = complete design brief with scope + constraints + motivation
+semantic_evaluation_delete_score,number,"0–3 range, see rubric for details.",Evaluation,Whether the user deleted nodes,User deleted multiple nodes based on judgment,1 = delete 1 node; 2 = delete 2–3 nodes; 3 = delete >3 nodes (strong critique)
+semantic_evaluation_selection_score,number,"0–3 range, see rubric for details.",Evaluation,Whether the user selected nodes to transform into structure mode,User selected multiple nodes and moved them into structure mode,1 = select 1 node; 2 = select 2–3 nodes; 3 = select multiple nodes (strong prioritization)
+semantic_evaluation_move_score_small,number,"0–3 range, see rubric for details.",Evaluation,Whether the user moved a node within the same quadrant in structure mode,User repositioned a node within the same quadrant,1 = small repositioning within quadrant; 2 = noticeable repositioning; 3 = large repositioning (still within quadrant)
+semantic_evaluation_move_score_big,number,"0–3 range, see rubric for details.",Reframing,Whether the user moved a node across different quadrants in structure mode,User moved a node from one quadrant to another,2 = move across quadrants; 3 = multiple cross-quadrant moves or direction-level reframing

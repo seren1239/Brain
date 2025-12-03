@@ -8,9 +8,79 @@ const API_URL = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).
 
 function CircleNode({ node, pos, size, color, isSelected, onSelect, onMouseDown, onClick = null }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<'right' | 'left' | 'top' | 'bottom'>('right');
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  const updateTooltipPosition = () => {
+    if (!nodeRef.current) return;
+
+    const nodeRect = nodeRef.current.getBoundingClientRect();
+    // Find the structure graph container or overflow container
+    const container = nodeRef.current.closest('.overflow-auto, #structure-graph-container') ||
+      document.getElementById('structure-graph-container')?.closest('.overflow-auto');
+    const containerRect = container?.getBoundingClientRect();
+
+    // Get actual tooltip dimensions if available
+    const tooltipWidth = tooltipRef.current?.getBoundingClientRect().width || 250;
+    const tooltipHeight = tooltipRef.current?.getBoundingClientRect().height || 60;
+    const margin = 10;
+
+    if (!containerRect) {
+      // Fallback: use viewport
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      const spaceRight = viewportWidth - nodeRect.right - margin;
+      const spaceLeft = nodeRect.left - margin;
+      const spaceBottom = viewportHeight - nodeRect.bottom - margin;
+      const spaceTop = nodeRect.top - margin;
+
+      if (spaceRight >= tooltipWidth) {
+        setTooltipPosition('right');
+      } else if (spaceLeft >= tooltipWidth) {
+        setTooltipPosition('left');
+      } else if (spaceBottom >= tooltipHeight) {
+        setTooltipPosition('bottom');
+      } else if (spaceTop >= tooltipHeight) {
+        setTooltipPosition('top');
+      } else {
+        setTooltipPosition('right');
+      }
+      return;
+    }
+
+    // Check available space in each direction
+    const spaceRight = containerRect.right - nodeRect.right - margin;
+    const spaceLeft = nodeRect.left - containerRect.left - margin;
+    const spaceBottom = containerRect.bottom - nodeRect.bottom - margin;
+    const spaceTop = nodeRect.top - containerRect.top - margin;
+
+    // Determine best position
+    if (spaceRight >= tooltipWidth) {
+      setTooltipPosition('right');
+    } else if (spaceLeft >= tooltipWidth) {
+      setTooltipPosition('left');
+    } else if (spaceBottom >= tooltipHeight) {
+      setTooltipPosition('bottom');
+    } else if (spaceTop >= tooltipHeight) {
+      setTooltipPosition('top');
+    } else {
+      // Default to right but will be constrained by max-width
+      setTooltipPosition('right');
+    }
+  };
+
+  // Recalculate position when tooltip is rendered
+  useEffect(() => {
+    if (isHovered && tooltipRef.current) {
+      updateTooltipPosition();
+    }
+  }, [isHovered]);
 
   return (
     <div
+      ref={nodeRef}
       className="absolute"
       style={{
         left: `${pos.x - size / 2}px`,
@@ -20,7 +90,11 @@ function CircleNode({ node, pos, size, color, isSelected, onSelect, onMouseDown,
         zIndex: isHovered || isSelected ? 10 : 2,
         cursor: onMouseDown ? 'move' : 'pointer'
       }}
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        // Small delay to ensure tooltip is rendered before calculating position
+        setTimeout(updateTooltipPosition, 10);
+      }}
       onMouseLeave={() => setIsHovered(false)}
       onMouseDown={(e) => {
         if (onMouseDown) {
@@ -46,8 +120,23 @@ function CircleNode({ node, pos, size, color, isSelected, onSelect, onMouseDown,
         }}
       />
       {isHovered && (
-        <div className="absolute left-full ml-2 top-1/2 transform -translate-y-1/2 bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 whitespace-nowrap text-sm z-20">
-          {node.text}
+        <div
+          ref={tooltipRef}
+          className={`absolute bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 text-sm z-20 break-words ${tooltipPosition === 'right' ? 'left-full ml-2 top-1/2 -translate-y-1/2' :
+            tooltipPosition === 'left' ? 'right-full mr-2 top-1/2 -translate-y-1/2' :
+              tooltipPosition === 'bottom' ? 'top-full mt-2 left-1/2 -translate-x-1/2' :
+                'bottom-full mb-2 left-1/2 -translate-x-1/2'
+            }`}
+          style={{
+            wordBreak: 'break-word',
+            whiteSpace: 'normal',
+            width: '200px',
+            maxHeight: 'none',
+            overflowY: 'visible',
+            lineHeight: '1.5'
+          }}
+        >
+          {node.title || node.text}
         </div>
       )}
     </div>
@@ -70,6 +159,7 @@ export default function IdeaTreeGenerator() {
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' or 'timeline'
   const [editCount, setEditCount] = useState(0);
   const [aiGenerationCount, setAiGenerationCount] = useState(0);
+  const [eventHistory, setEventHistory] = useState([]); // Track all events for semantic scoring
   const [selectedForStructure, setSelectedForStructure] = useState(new Set());
   const [hierarchyAnalysis, setHierarchyAnalysis] = useState(null);
   const [analyzingStructure, setAnalyzingStructure] = useState(false);
@@ -82,7 +172,10 @@ export default function IdeaTreeGenerator() {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [mouseDownPos, setMouseDownPos] = useState({ x: 0, y: 0 });
   const [structureGridPositions, setStructureGridPositions] = useState({});
+  const [nodeInitialPosition, setNodeInitialPosition] = useState<{ impact: number; feasibility: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [selectedStructureNode, setSelectedStructureNode] = useState(null);
@@ -91,6 +184,8 @@ export default function IdeaTreeGenerator() {
   const [designTopic, setDesignTopic] = useState(''); // Store the initial design topic
   const [topicNodeId, setTopicNodeId] = useState(null); // Store the TOPIC node ID
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // Track which node is hovered
+  const [addNodeModal, setAddNodeModal] = useState(null); // Track which node's add button was clicked (node ID)
+  const [addNodeText, setAddNodeText] = useState(''); // Text input for new node
   const nodeRefs = useRef({});
   const reflectionRefs = useRef({});
   const [animatingNodes, setAnimatingNodes] = useState(new Set()); // Track nodes that are animating
@@ -235,77 +330,304 @@ export default function IdeaTreeGenerator() {
     localStorage.setItem('ideaTreeData', JSON.stringify(dataToSave));
   }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId, structureSelectedNodeIds]);
 
-  // Calculate Creativity Index using TTCT + Dependency Framework
-  const calculateCreativityIndex = () => {
-    if (nodes.length === 0) return { creativity: 0, dependency: 0 };
+  // ============================================================================
+  // NEW SEMANTIC SPACE FRAMEWORK
+  // Based on CSV: Event Tracking _ Criteria - Criteria.csv
+  // ============================================================================
 
-    // Fluency (F): number of ideas generated (count, weight 0.25)
-    // Normalize: assuming max 100 nodes, but will use relative scaling
-    const maxExpectedNodes = 100;
-    const fluency = Math.min(nodes.length / maxExpectedNodes, 1);
-
-    // Flexibility (X): variety of idea categories (unique types, weight 0.25)
-    const uniqueTypes = new Set(nodes.map(n => n.type));
-    const flexibility = uniqueTypes.size / 4; // max 4 types: main, sub, insight, opportunity
-
-    // Originality (O): novelty of ideas (semantic similarity, weight 0.30)
-    // Calculate similarity between node texts using word overlap
-    const calculateSimilarity = (text1, text2) => {
-      if (!text1 || !text2) return 0;
-      const words1 = new Set(text1.toLowerCase().split(/\s+/));
-      const words2 = new Set(text2.toLowerCase().split(/\s+/));
-      const intersection = new Set([...words1].filter(w => words2.has(w)));
-      const union = new Set([...words1, ...words2]);
-      return union.size > 0 ? intersection.size / union.size : 0;
+  // Calculate semantic scores for different event types
+  const calculateSemanticScores = (eventType, actor, eventData) => {
+    const scores = {
+      semantic_generative_score: 0,
+      semantic_blending_score: 0,
+      semantic_reframing_score: 0,
+      semantic_evaluation_score: 0,
+      semantic_constraint_score: 0,
+      semantic_domain_score: 0,
+      semantic_input_score: 0,
+      semantic_evaluation_delete_score: 0,
+      semantic_evaluation_selection_score: 0,
+      semantic_evaluation_move_score_small: 0,
+      semantic_evaluation_move_score_big: 0
     };
 
-    let totalSimilarity = 0;
-    let comparisonCount = 0;
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        totalSimilarity += calculateSimilarity(nodes[i].text, nodes[j].text);
-        comparisonCount++;
-      }
+    switch (eventType) {
+      case 'Initial Input':
+        // semantic_input_score: 0 = minimal; 1 = basic task; 2 = problem with context; 3 = complete brief
+        const inputLength = (eventData.raw_content || '').length;
+        if (inputLength < 20) scores.semantic_input_score = 0;
+        else if (inputLength < 50) scores.semantic_input_score = 1;
+        else if (inputLength < 150) scores.semantic_input_score = 2;
+        else scores.semantic_input_score = 3;
+        break;
+
+      case 'Create Node':
+        if (actor === 'AI') {
+          // AI generating nodes - always expands semantic space
+          const nodeCount = eventData.node_count || 1;
+          const content = (eventData.new_content || '').toLowerCase();
+
+          // 1. Generative Expansion: ALWAYS present when nodes are created
+          if (nodeCount === 1) scores.semantic_generative_score = 1; // adds 1 small new idea
+          else if (nodeCount <= 3) scores.semantic_generative_score = 2; // adds 2-3 distinct ideas
+          else scores.semantic_generative_score = 3; // adds >3 diverse ideas
+
+          // 2. Conceptual Blending: Multiple nodes = conceptual connections
+          if (eventData.node_ids_involved && eventData.node_ids_involved.length > 1) {
+            if (eventData.node_ids_involved.length >= 3) {
+              scores.semantic_blending_score = 3; // strong conceptual fusion
+            } else {
+              scores.semantic_blending_score = 2; // clear cross-domain analogy
+            }
+          } else if (nodeCount > 1) {
+            scores.semantic_blending_score = 1; // superficial linkage (multiple nodes = some blending)
+          }
+          // Single node: no blending (0 is correct)
+
+          // 3. Reframing: New nodes usually introduce new perspectives
+          if (eventData.shifts_direction) {
+            scores.semantic_reframing_score = 2; // clear shift in perspective
+          } else if (nodeCount > 1) {
+            scores.semantic_reframing_score = 1; // minor adjustment (multiple perspectives)
+          } else {
+            // Single node creation still adds perspective, give minimal score
+            scores.semantic_reframing_score = 1; // minor adjustment
+          }
+
+          // 4. Evaluation: Check for evaluative language or insights
+          const evaluativeKeywords = ['should', 'must', 'important', 'critical', 'key', 'essential', 'consider', 'evaluate', 'need', 'priority', 'insight', 'observe', 'notice', 'pattern'];
+          const evaluationCount = evaluativeKeywords.filter(kw => content.includes(kw)).length;
+          if (evaluationCount >= 3) {
+            scores.semantic_evaluation_score = 2; // explicit critique
+          } else if (evaluationCount >= 1) {
+            scores.semantic_evaluation_score = 1; // light preference/judgment
+          }
+          // No keywords: no evaluation (0 is correct)
+
+          // 5. Constraint Setting: Check for constraints or limitations
+          const constraintKeywords = ['constraint', 'limit', 'must', 'require', 'only', 'specific', 'within', 'bound', 'restrict', 'focus', 'narrow', 'scope'];
+          const constraintCount = constraintKeywords.filter(kw => content.includes(kw)).length;
+          if (constraintCount >= 2) {
+            scores.semantic_constraint_score = 2; // moderate narrowing
+          } else if (constraintCount >= 1) {
+            scores.semantic_constraint_score = 1; // small constraint
+          }
+          // No keywords: no constraint (0 is correct)
+
+          // 6. Domain Knowledge: Based on content detail - ALWAYS give score if content exists
+          // AI generating nodes always adds some domain knowledge
+          const contentLength = eventData.content_length || (eventData.new_content || '').length;
+          if (contentLength > 200) {
+            scores.semantic_domain_score = 3; // deep professional knowledge
+          } else if (contentLength > 100) {
+            scores.semantic_domain_score = 2; // moderate contextualization
+          } else if (contentLength > 20) {
+            scores.semantic_domain_score = 1; // light contextual detail
+          }
+          // Give at least 1 point if there's any content at all (AI always adds some knowledge)
+          if (contentLength > 0 && scores.semantic_domain_score === 0) {
+            scores.semantic_domain_score = 1; // minimum: any content = light contextual detail
+          }
+        } else {
+          // Human manually creating node
+          scores.semantic_generative_score = 1; // adds 1 small new idea
+          // Human creation might also have domain knowledge
+          const contentLength = (eventData.new_content || '').length;
+          if (contentLength > 30) {
+            scores.semantic_domain_score = 1; // light contextual detail
+          }
+        }
+        break;
+
+      case 'Edit Node':
+        if (actor === 'HUMAN') {
+          // Check if edit shifts direction (reframing)
+          const oldText = eventData.raw_content || '';
+          const newText = eventData.new_content || '';
+          const similarity = calculateTextSimilarity(oldText, newText);
+          if (similarity < 0.3) {
+            scores.semantic_reframing_score = 3; // full redefinition
+          } else if (similarity < 0.6) {
+            scores.semantic_reframing_score = 2; // clear shift
+          } else if (similarity < 0.8) {
+            scores.semantic_reframing_score = 1; // minor adjustment
+          }
+
+          // Check for constraint setting
+          const constraintKeywords = ['constraint', 'limit', 'must', 'require', 'only', 'specific'];
+          const hasConstraint = constraintKeywords.some(kw => newText.toLowerCase().includes(kw));
+          if (hasConstraint) {
+            scores.semantic_constraint_score = 2; // moderate narrowing
+          }
+
+          // Domain knowledge
+          if (newText.length > oldText.length * 1.5) {
+            scores.semantic_domain_score = 2; // moderate contextualization
+          }
+        }
+        break;
+
+      case 'Delete Node':
+        if (actor === 'HUMAN') {
+          const deleteCount = eventData.delete_count || 1;
+          if (deleteCount === 1) scores.semantic_evaluation_delete_score = 1;
+          else if (deleteCount <= 3) scores.semantic_evaluation_delete_score = 2;
+          else scores.semantic_evaluation_delete_score = 3;
+
+          scores.semantic_evaluation_score = scores.semantic_evaluation_delete_score;
+        }
+        break;
+
+      case 'Move Node (within-boundary)':
+        if (actor === 'HUMAN') {
+          // Calculate move distance to determine score (1-3) per CSV criteria
+          const moveDistance = eventData.move_distance || 0;
+          if (moveDistance > 4) {
+            scores.semantic_evaluation_move_score_small = 3; // large repositioning within quadrant
+          } else if (moveDistance > 2) {
+            scores.semantic_evaluation_move_score_small = 2; // noticeable repositioning
+          } else {
+            scores.semantic_evaluation_move_score_small = 1; // small repositioning within quadrant
+          }
+          scores.semantic_evaluation_score = scores.semantic_evaluation_move_score_small;
+        }
+        break;
+
+      case 'Move Node (cross-boundary)':
+        if (actor === 'HUMAN') {
+          // Check if this is a multiple cross-quadrant move (3 points) or single (2 points)
+          // Count previous cross-boundary moves for this node in recent events
+          const recentCrossBoundaryMoves = eventHistory.filter(e =>
+            e.actor === 'HUMAN' &&
+            e.event_type === 'Move Node (cross-boundary)' &&
+            e.node_id === eventData.node_id
+          ).length;
+
+          if (recentCrossBoundaryMoves >= 1) {
+            // Multiple cross-quadrant moves or direction-level reframing
+            scores.semantic_evaluation_move_score_big = 3;
+            scores.semantic_reframing_score = 3; // full redefinition (direction-level reframing)
+          } else {
+            // Single move across quadrants
+            scores.semantic_evaluation_move_score_big = 2;
+            scores.semantic_reframing_score = 2; // clear shift in perspective
+          }
+          scores.semantic_evaluation_score = scores.semantic_evaluation_move_score_big;
+        }
+        break;
+
+      case 'Select Nodes for Structure':
+        if (actor === 'HUMAN') {
+          // CSV criteria: 1 = select 1 node; 2 = select 2-3 nodes; 3 = select multiple nodes (strong prioritization)
+          const selectionCount = eventData.selection_count || 1;
+          if (selectionCount >= 4) {
+            scores.semantic_evaluation_selection_score = 3; // select multiple nodes (strong prioritization)
+          } else if (selectionCount >= 2) {
+            scores.semantic_evaluation_selection_score = 2; // select 2-3 nodes
+          } else {
+            scores.semantic_evaluation_selection_score = 1; // select 1 node
+          }
+          scores.semantic_evaluation_score = scores.semantic_evaluation_selection_score;
+        }
+        break;
     }
-    const avgSimilarity = comparisonCount > 0 ? totalSimilarity / comparisonCount : 0;
-    // Originality is inverse of similarity (lower similarity = higher originality)
-    const originality = 1 - avgSimilarity;
 
-    // Elaboration (E): depth and linkage (density + length, weight 0.20)
-    // Calculate connection density: number of edges / possible edges
-    const edges = nodes.filter(n => n.parentId || (n.parentIds && n.parentIds.length > 0)).length;
-    const possibleEdges = nodes.length > 1 ? (nodes.length * (nodes.length - 1)) / 2 : 0;
-    const density = possibleEdges > 0 ? edges / nodes.length : 0; // normalize by node count
-
-    // Average text length
-    const avgLength = nodes.length > 0
-      ? nodes.reduce((sum, n) => sum + (n.text?.length || 0), 0) / nodes.length
-      : 0;
-    const maxExpectedLength = 100;
-    const lengthScore = Math.min(avgLength / maxExpectedLength, 1);
-
-    const elaboration = (density * 0.5) + (lengthScore * 0.5);
-
-    // Dependency (D): reliance on AI suggestions (AI nodes ÷ total nodes, weight –0.20)
-    // AI nodes are those generated by AI (all nodes are AI-generated unless manually created)
-    // For now, all nodes are AI-generated, but we can track manually created nodes later
-    const aiNodes = nodes.filter(n => !n.manuallyCreated);
-    const dependency = nodes.length > 0 ? Math.min(aiNodes.length / nodes.length, 1) : 0;
-
-    // Final formula: CI' = 0.25F + 0.25X + 0.30O + 0.20E – 0.20D
-    const creativity = (0.25 * fluency) + (0.25 * flexibility) + (0.30 * originality) + (0.20 * elaboration) - (0.20 * dependency);
-
-    // Ensure Creativity + Dependency = 100 (Dependency = 100 - Creativity)
-    const normalizedCreativity = Math.max(0, Math.min(1, creativity));
-    const normalizedDependency = 1 - normalizedCreativity; // Dependency = 100 - Creativity
+    // Calculate total semantic score
+    const semantic_total_score =
+      scores.semantic_generative_score +
+      scores.semantic_blending_score +
+      scores.semantic_reframing_score +
+      scores.semantic_evaluation_score +
+      scores.semantic_constraint_score +
+      scores.semantic_domain_score;
 
     return {
-      creativity: normalizedCreativity,
-      dependency: normalizedDependency,
-      fluency,
-      flexibility,
-      originality,
-      elaboration
+      ...scores,
+      semantic_total_score
+    };
+  };
+
+  // Helper function to calculate text similarity
+  const calculateTextSimilarity = (text1, text2) => {
+    if (!text1 || !text2) return 0;
+    const words1 = new Set(text1.toLowerCase().split(/\s+/));
+    const words2 = new Set(text2.toLowerCase().split(/\s+/));
+    const intersection = new Set([...words1].filter(w => words2.has(w)));
+    const union = new Set([...words1, ...words2]);
+    return union.size > 0 ? intersection.size / union.size : 0;
+  };
+
+  // Track an event and calculate semantic scores
+  const trackEvent = (eventType, actor, eventData) => {
+    const event = {
+      event_id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      actor: actor, // 'HUMAN' or 'AI'
+      mode: mode, // 'exploration' or 'structure'
+      event_type: eventType,
+      raw_content: eventData.raw_content || null,
+      new_content: eventData.new_content || null,
+      node_id: eventData.node_id || null,
+      node_ids_involved: eventData.node_ids_involved || null,
+      timestamp: new Date().toISOString(),
+      ...calculateSemanticScores(eventType, actor, eventData)
+    };
+
+    // Calculate human and AI totals
+    const humanEvents = eventHistory.filter(e => e.actor === 'HUMAN');
+    const aiEvents = eventHistory.filter(e => e.actor === 'AI');
+
+    const humanScoreTotal = [...humanEvents, ...(actor === 'HUMAN' ? [event] : [])]
+      .reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+    const aiScoreTotal = [...aiEvents, ...(actor === 'AI' ? [event] : [])]
+      .reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+
+    const totalScore = humanScoreTotal + aiScoreTotal;
+    (event as any).human_score_total = humanScoreTotal;
+    (event as any).ai_score_total = aiScoreTotal;
+    (event as any).curve_human_ratio = totalScore > 0 ? humanScoreTotal / totalScore : 0;
+    (event as any).curve_ai_ratio = totalScore > 0 ? aiScoreTotal / totalScore : 0;
+
+    setEventHistory(prev => [...prev, event]);
+    return event;
+  };
+
+  // Calculate Creativity Index using NEW Semantic Space Framework
+  const calculateCreativityIndex = () => {
+    if (eventHistory.length === 0) {
+      // Fallback for backward compatibility
+      return { creativity: 0, dependency: 0 };
+    }
+
+    // Calculate totals from event history
+    const humanEvents = eventHistory.filter(e => e.actor === 'HUMAN');
+    const aiEvents = eventHistory.filter(e => e.actor === 'AI');
+
+    const humanScoreTotal = humanEvents.reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+    const aiScoreTotal = aiEvents.reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+    const totalScore = humanScoreTotal + aiScoreTotal;
+
+    // Normalize to 0-1 range (assuming max possible score per event is 18 = 6 dimensions * 3)
+    const maxPossibleScore = eventHistory.length * 18;
+    const normalizedHumanScore = maxPossibleScore > 0 ? humanScoreTotal / maxPossibleScore : 0;
+    const normalizedAiScore = maxPossibleScore > 0 ? aiScoreTotal / maxPossibleScore : 0;
+
+    // Creativity = Human contribution ratio (higher human contribution = higher creativity)
+    // Dependency = AI contribution ratio (higher AI contribution = higher dependency)
+    const creativity = totalScore > 0 ? humanScoreTotal / totalScore : 0;
+    const dependency = totalScore > 0 ? aiScoreTotal / totalScore : 0;
+
+    return {
+      creativity: Math.max(0, Math.min(1, creativity)),
+      dependency: Math.max(0, Math.min(1, dependency)),
+      human_score_total: humanScoreTotal,
+      ai_score_total: aiScoreTotal,
+      curve_human_ratio: creativity,
+      curve_ai_ratio: dependency,
+      // Keep old fields for backward compatibility
+      fluency: normalizedHumanScore,
+      flexibility: normalizedAiScore,
+      originality: creativity,
+      elaboration: dependency
     };
   };
 
@@ -380,6 +702,12 @@ export default function IdeaTreeGenerator() {
       setNodes([topicNode]);
       setTopicNodeId(topicNodeId);
 
+      // Track Initial Input event
+      trackEvent('Initial Input', 'HUMAN', {
+        raw_content: topicText,
+        node_id: topicNodeId.toString()
+      });
+
       // Then generate Step 1 nodes (Context, User, Task, Goal) as children of TOPIC
       await generateStep1ProblemFraming(topicText, topicNodeId);
     } catch (err) {
@@ -418,23 +746,26 @@ Output 4 main problem-framing nodes:
 - Goal: What outcome or value is the user pursuing?
 
 🟡 CONSTRAINTS:
-- Output only the 4 node titles
+- Output only the 4 node titles with descriptions
 - No sub-details, no insights, no opinions
 - Do NOT include any opportunities or solutions
-- Each node should be a concise phrase (5-10 words)
+- Each node title should be a concise phrase (5-10 words)
+- Each description should provide more detail (1-3 sentences)
 
 🟠 FORMAT (MUST FOLLOW EXACTLY):
 Respond ONLY in JSON format:
 {
   "nodes": [
-    { "category": "Context", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
-    { "category": "User", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
-    { "category": "Task", "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
-    { "category": "Goal", "text": "...", "keyword": "...", "critic": "...", "advice": "..." }
+    { "category": "Context", "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "User", "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "Task", "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "category": "Goal", "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." }
   ]
 }
 
 Note: 
+- "title": Short, concise phrase (5-10 words) for display on the node
+- "description": Detailed explanation (1-3 sentences) shown when node is clicked
 - "keyword" should be a concise 2–5 word phrase capturing the main meaning.
 - "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
 - "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
@@ -482,7 +813,7 @@ Note:
             setReflections(prev => [{
               id: nodeId + 10000 + idx,
               nodeId: nodeId,
-              topic: nodeObj.text, // Keep node text for reference
+              topic: nodeObj.title || nodeObj.text, // Keep node text for reference
               title: refType.data.trim(), // Use the reflection text as title
               content: refType.data.trim(), // Same content for display
               type: refType.type
@@ -508,8 +839,10 @@ Note:
 
         return {
           id: nodeId,
-          text: nodeObj.text,
-          keyword: nodeObj.keyword || extractKeyword(nodeObj.text),
+          title: nodeObj.title || nodeObj.text || '',
+          description: nodeObj.description || '',
+          text: nodeObj.text || nodeObj.title || '', // For backward compatibility
+          keyword: nodeObj.keyword || extractKeyword(nodeObj.title || nodeObj.text || ''),
           type: 'main',
           step: 1,
           category: nodeObj.category,
@@ -524,6 +857,23 @@ Note:
       // Add nodes with sequential animation
       addNodesWithAnimation(newNodes, 300);
       setCurrentStep(2); // Move to step 2 after step 1 completion
+
+      // Track Create Node event as a batch (all nodes together)
+      // This allows proper calculation of node_count and blending scores
+      if (newNodes.length > 0) {
+        const nodeIds = newNodes.map(n => n.id.toString());
+        const combinedContent = newNodes.map(n => n.text).join(' ');
+        const avgContentLength = combinedContent.length / newNodes.length;
+
+        trackEvent('Create Node', 'AI', {
+          node_id: nodeIds[0], // First node ID
+          node_ids_involved: nodeIds, // All node IDs for blending calculation
+          new_content: combinedContent, // Combined content for analysis
+          node_count: newNodes.length, // Actual count of nodes created
+          shifts_direction: true, // Step 1 always shifts from topic
+          content_length: avgContentLength
+        });
+      }
 
       const newMetrics = calculateCreativityIndex();
       setCreativityHistory(prev => [...prev, newMetrics]);
@@ -580,12 +930,14 @@ Expand the main node into 1-3 concrete, specific sub-nodes that help detail the 
 Respond ONLY in JSON format:
 {
   "subNodes": [
-    { "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
 
 Note: 
+- "title": Short, concise phrase (5-15 words) displayed on the node
+- "description": Detailed explanation (1-3 sentences) shown when node is clicked
 - "keyword" should be a concise 2–5 word phrase capturing the main meaning.
 - "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
 - "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
@@ -637,7 +989,7 @@ Note:
             setReflections(prev => [{
               id: nodeId + 10000 + idx,
               nodeId: nodeId,
-              topic: subNodeObj.text, // Keep node text for reference
+              topic: subNodeObj.title || subNodeObj.text, // Keep node text for reference
               title: refType.data.trim(), // Use the reflection text as title
               content: refType.data.trim(), // Same content for display
               type: refType.type
@@ -661,8 +1013,10 @@ Note:
 
         return {
           id: nodeId,
-          text: subNodeObj.text,
-          keyword: subNodeObj.keyword || extractKeyword(subNodeObj.text),
+          title: subNodeObj.title || subNodeObj.text || '',
+          description: subNodeObj.description || '',
+          text: subNodeObj.text || subNodeObj.title || '', // For backward compatibility
+          keyword: subNodeObj.keyword || extractKeyword(subNodeObj.title || subNodeObj.text || ''),
           type: 'sub',
           step: 2,
           category: parentNode.category,
@@ -678,6 +1032,21 @@ Note:
       addNodesWithAnimation(newNodes, 300);
       setCurrentStep(3); // Move to step 3 after step 2 completion
 
+      // Track Create Node event as a batch
+      if (newNodes.length > 0) {
+        const nodeIds = newNodes.map(n => n.id.toString());
+        const combinedContent = newNodes.map(n => n.text).join(' ');
+        const avgContentLength = combinedContent.length / newNodes.length;
+
+        trackEvent('Create Node', 'AI', {
+          node_id: nodeIds[0],
+          node_ids_involved: nodeIds,
+          new_content: combinedContent,
+          node_count: newNodes.length,
+          content_length: avgContentLength
+        });
+      }
+
       const newMetrics = calculateCreativityIndex();
       setCreativityHistory(prev => [...prev, newMetrics]);
 
@@ -690,7 +1059,28 @@ Note:
   };
 
   // Step 2: Sub-node Expansion - Public function (for single selection)
+  // Step 3: User Behavior Insights - Public function (for single selection)
+  const generateStep3Insights = async (parentNode) => {
+    // Allow both main (step 1) and sub (step 2) nodes to generate insights
+    if ((parentNode.type !== 'main' && parentNode.type !== 'sub') || (parentNode.step !== 1 && parentNode.step !== 2)) return;
+
+    // Check if already expanded
+    const existingChildren = nodes.filter(n => n.parentId === parentNode.id);
+    if (existingChildren.length > 0) return;
+
+    setLoading(true);
+    await generateStep3InsightsInternal(parentNode);
+    setLoading(false);
+  };
+
   const generateStep2SubNodes = async (parentNode) => {
+    // This function is now deprecated - main nodes should generate insights directly
+    // Keeping for backward compatibility but redirecting to insight generation
+    if (parentNode.type === 'main' && parentNode.step === 1) {
+      await generateStep3Insights(parentNode);
+      return;
+    }
+
     if (parentNode.type !== 'main' || parentNode.step !== 1) return;
 
     // Check if already expanded
@@ -704,7 +1094,8 @@ Note:
 
   // Step 3: User Behavior Insights - Helper for multi-selection (returns nodes)
   const generateStep3InsightsForMulti = async (parentNode) => {
-    if (parentNode.type !== 'sub' || parentNode.step !== 2) return [];
+    // Allow both main (step 1) and sub (step 2) nodes to generate insights
+    if ((parentNode.type !== 'main' && parentNode.type !== 'sub') || (parentNode.step !== 1 && parentNode.step !== 2)) return [];
 
     const existingChildren = nodes.filter(n => n.parentId === parentNode.id || (n.parentIds && n.parentIds.includes(parentNode.id)));
     if (existingChildren.length > 0) return [];
@@ -715,6 +1106,10 @@ Note:
   // Step 3: User Behavior Insights - Internal function
   const generateStep3InsightsInternal = async (parentNode) => {
     try {
+      // Determine if parent is main node (Context/Task/Goal/User) or sub node
+      const isMainNode = parentNode.type === 'main' && parentNode.step === 1;
+      const nodeLabel = isMainNode ? `Main node: [${parentNode.category}] ${parentNode.text}` : `Sub-node: [${parentNode.category}] ${parentNode.text}`;
+
       const response = await fetch(API_URL, {
         method: "POST",
         headers: {
@@ -726,9 +1121,9 @@ Note:
           messages: [
             {
               role: "user",
-              content: `Given a sub-node, generate 1-3 user behavior insights (generate 1, 2, or 3 based on what makes sense).
+              content: `Given a ${isMainNode ? 'main problem-framing node (Context, User, Task, or Goal)' : 'sub-node'}, generate 1-3 user behavior insights (generate 1, 2, or 3 based on what makes sense).
 
-Sub-node: [${parentNode.category}] ${parentNode.text}
+${nodeLabel}
 
 🔶 STEP 3: USER BEHAVIOR & PAIN POINT INSIGHTS
 
@@ -747,12 +1142,14 @@ Generate 1-3 user behavior insights for this sub-node. Each insight should descr
 Respond ONLY in JSON format:
 {
   "insights": [
-    { "text": "...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
 
 Note: 
+- "title": Short, concise phrase (10-18 words) displayed on the node
+- "description": Detailed explanation (1-3 sentences) shown when node is clicked
 - "keyword" should be a concise 2–5 word phrase capturing the main meaning.
 - "critic" (optional): Must be only ONE sentence under 18 words, and must be a short challenging question from a different perspective that provokes reflection (must end with "?"). Example critic patterns: questioning hidden causes, challenging assumptions, reconsidering boundaries. If no meaningful critic applies, omit this field.
 - "advice" (optional): Must be only ONE sentence under 18 words, and must be a brief strategy-oriented suggestion that deepens or expands the idea. Example advice patterns: creative reframing strategies, gamification patterns, exploring cross-modal cues. Do not include solutions or implementation details. If no meaningful advice applies, omit this field.`
@@ -804,7 +1201,7 @@ Note:
             setReflections(prev => [{
               id: nodeId + 10000 + idx,
               nodeId: nodeId,
-              topic: insightObj.text, // Keep node text for reference
+              topic: insightObj.title || insightObj.text, // Keep node text for reference
               title: refType.data.trim(), // Use the reflection text as title
               content: refType.data.trim(), // Same content for display
               type: refType.type
@@ -828,11 +1225,13 @@ Note:
 
         return {
           id: nodeId,
-          text: insightObj.text,
-          keyword: insightObj.keyword || extractKeyword(insightObj.text),
+          title: insightObj.title || insightObj.text || '',
+          description: insightObj.description || '',
+          text: insightObj.text || insightObj.title || '', // For backward compatibility
+          keyword: insightObj.keyword || extractKeyword(insightObj.title || insightObj.text || ''),
           type: 'insight',
           step: 3,
-          category: parentNode.category,
+          category: 'Insight', // Always set category to "Insight" for insight nodes
           parentId: parentNode.id,
           x: initialX,
           y: initialY,
@@ -845,6 +1244,21 @@ Note:
       addNodesWithAnimation(newNodes, 300);
       setCurrentStep(4); // Move to step 4 after step 3 completion
 
+      // Track Create Node event as a batch
+      if (newNodes.length > 0) {
+        const nodeIds = newNodes.map(n => n.id.toString());
+        const combinedContent = newNodes.map(n => n.text).join(' ');
+        const avgContentLength = combinedContent.length / newNodes.length;
+
+        trackEvent('Create Node', 'AI', {
+          node_id: nodeIds[0],
+          node_ids_involved: nodeIds,
+          new_content: combinedContent,
+          node_count: newNodes.length,
+          content_length: avgContentLength
+        });
+      }
+
       const newMetrics = calculateCreativityIndex();
       setCreativityHistory(prev => [...prev, newMetrics]);
 
@@ -856,17 +1270,6 @@ Note:
     }
   };
 
-  // Step 3: User Behavior Insights - Public function (for single selection)
-  const generateStep3Insights = async (parentNode) => {
-    if (parentNode.type !== 'sub' || parentNode.step !== 2) return;
-
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id);
-    if (existingChildren.length > 0) return;
-
-    setLoading(true);
-    await generateStep3InsightsInternal(parentNode);
-    setLoading(false);
-  };
 
   // Step 4: Design Opportunities - Helper for multi-selection (returns nodes)
   const generateStep4OpportunitiesForMulti = async (parentNode) => {
@@ -917,10 +1320,14 @@ Generate 1-3 Design Opportunities per insight. A Design Opportunity is:
 Respond ONLY in JSON format:
 {
   "opportunities": [
-    { "text": "Opportunity to...", "keyword": "...", "critic": "...", "advice": "..." },
+    { "title": "Opportunity to...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
     ... (1-3 items total)
   ]
 }
+
+Note:
+- "title": Short, concise phrase (8-16 words) displayed on the node
+- "description": Detailed explanation (1-3 sentences) shown when node is clicked
 
 Note: 
 - "keyword" should be a concise 2–5 word phrase capturing the main meaning.
@@ -974,7 +1381,7 @@ Note:
             setReflections(prev => [{
               id: nodeId + 10000 + idx,
               nodeId: nodeId,
-              topic: oppObj.text, // Keep node text for reference
+              topic: oppObj.title || oppObj.text, // Keep node text for reference
               title: refType.data.trim(), // Use the reflection text as title
               content: refType.data.trim(), // Same content for display
               type: refType.type
@@ -998,11 +1405,13 @@ Note:
 
         return {
           id: nodeId,
-          text: oppObj.text,
-          keyword: oppObj.keyword || extractKeyword(oppObj.text),
+          title: oppObj.title || oppObj.text || '',
+          description: oppObj.description || '',
+          text: oppObj.text || oppObj.title || '', // For backward compatibility
+          keyword: oppObj.keyword || extractKeyword(oppObj.title || oppObj.text || ''),
           type: 'opportunity',
           step: 4,
-          category: parentNode.category,
+          category: 'Design Opportunity', // Always set category to "Design Opportunity" for opportunity nodes
           parentId: parentNode.id,
           x: initialX,
           y: initialY,
@@ -1013,6 +1422,21 @@ Note:
 
       // Add nodes with sequential animation
       addNodesWithAnimation(newNodes, 300);
+
+      // Track Create Node event as a batch
+      if (newNodes.length > 0) {
+        const nodeIds = newNodes.map(n => n.id.toString());
+        const combinedContent = newNodes.map(n => n.text).join(' ');
+        const avgContentLength = combinedContent.length / newNodes.length;
+
+        trackEvent('Create Node', 'AI', {
+          node_id: nodeIds[0],
+          node_ids_involved: nodeIds,
+          new_content: combinedContent,
+          node_count: newNodes.length,
+          content_length: avgContentLength
+        });
+      }
 
       const newMetrics = calculateCreativityIndex();
       setCreativityHistory(prev => [...prev, newMetrics]);
@@ -1220,6 +1644,9 @@ JSON-ONLY OUTPUT FORMAT
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
 
+      // Store the index when Structure Mode starts
+      parsed.structureModeStartIndex = creativityHistory.length;
+
       setHierarchyAnalysis(parsed);
 
       const newStructureReflections = [];
@@ -1280,6 +1707,15 @@ JSON-ONLY OUTPUT FORMAT
         }, 100);
       }
       // If positions already exist, they will be preserved and used in getStructuredPosition
+
+      // Track Selection event for structure mode (CSV criteria)
+      const selectedCount = selectedForStructure.size;
+      if (selectedCount > 0) {
+        trackEvent('Select Nodes for Structure', 'HUMAN', {
+          node_ids: Array.from(selectedForStructure).map(id => id.toString()),
+          selection_count: selectedCount
+        });
+      }
 
       // Store selected node IDs for structure mode display (before clearing selection)
       setStructureSelectedNodeIds(new Set(selectedForStructure));
@@ -1345,9 +1781,19 @@ JSON-ONLY OUTPUT FORMAT
   };
 
   const handleEditSave = () => {
+    const nodeToEdit = nodes.find(n => n.id === editingNode);
+    if (!nodeToEdit) return;
+
     setNodes(prev => prev.map(n =>
       n.id === editingNode ? { ...n, text: editValue, edited: true } : n
     ));
+
+    // Track Edit Node event
+    trackEvent('Edit Node', 'HUMAN', {
+      node_id: editingNode.toString(),
+      raw_content: nodeToEdit.text,
+      new_content: editValue
+    });
 
     const newEditCount = editCount + 1;
     setEditCount(newEditCount);
@@ -1355,7 +1801,13 @@ JSON-ONLY OUTPUT FORMAT
     const newMetrics = calculateCreativityIndex();
     setCreativityHistory(prev => {
       const updated = [...prev];
-      if (updated.length > 0) {
+      // If structure mode has started, add new entry instead of updating last one
+      const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+      if (structureModeStartIndex !== null && prev.length >= structureModeStartIndex) {
+        // Structure mode is active, add new entry
+        return [...prev, newMetrics];
+      } else if (updated.length > 0) {
+        // Exploration mode, update last entry
         updated[updated.length - 1] = newMetrics;
       }
       return updated;
@@ -1411,10 +1863,12 @@ Your task:
 2. Determine what type(s) of nodes should be generated next - be creative and flexible
 3. You can generate:
    - Main nodes (if missing categories or new perspective needed)
-   - Sub-nodes (for main nodes)
-   - Insights (for sub-nodes)
+   - Sub-nodes (for main nodes - optional intermediate step)
+   - Insights (for main nodes OR sub-nodes) - main nodes should directly generate insights
    - Opportunities (for insights)
    - OR any combination - don't limit yourself to "next step" only!
+
+Important: Main nodes (Context, User, Task, Goal) should directly generate insights, not sub-nodes.
 
 Constraints:
 - Generate 1-3 nodes per selected node
@@ -1482,8 +1936,8 @@ Respond ONLY in JSON format:
             generatedNodes = await generateStep2SubNodesForMulti(targetNode);
           }
         } else if (decision.nodeType === 'insight') {
-          // Check if targetNode can have insights (sub node)
-          if (targetNode.type === 'sub') {
+          // Check if targetNode can have insights (main node or sub node)
+          if (targetNode.type === 'main' || targetNode.type === 'sub') {
             generatedNodes = await generateStep3InsightsForMulti(targetNode);
           }
         } else if (decision.nodeType === 'opportunity') {
@@ -1557,11 +2011,16 @@ ${category === 'Goal' ? '- Goal: What outcome or value is the user pursuing?' : 
 🟠 FORMAT (MUST FOLLOW EXACTLY):
 Respond ONLY in JSON format:
 {
-  "text": "...",
+  "title": "...",
+  "description": "...",
   "keyword": "...",
   "critic": "...",
   "advice": "..."
 }
+
+Note:
+- "title": Short, concise phrase (5-10 words) displayed on the node
+- "description": Detailed explanation (1-3 sentences) shown when node is clicked
 
 Note: 
 - "keyword" should be a concise 2–5 word phrase capturing the main meaning.
@@ -1608,7 +2067,7 @@ Note:
           setReflections(prev => [{
             id: nodeId + 10000 + idx,
             nodeId: nodeId,
-            topic: parsed.text, // Keep node text for reference
+            topic: parsed.title || parsed.text, // Keep node text for reference
             title: refType.data.trim(), // Use the reflection text as title
             content: refType.data.trim(), // Same content for display
             type: refType.type
@@ -1627,8 +2086,10 @@ Note:
 
       const newNode = {
         id: nodeId,
-        text: parsed.text,
-        keyword: parsed.keyword || extractKeyword(parsed.text),
+        title: parsed.title || parsed.text || '',
+        description: parsed.description || '',
+        text: parsed.text || parsed.title || '', // For backward compatibility
+        keyword: parsed.keyword || extractKeyword(parsed.title || parsed.text || ''),
         type: 'main',
         step: 1,
         category: category,
@@ -1675,22 +2136,141 @@ Note:
     setSelectedNode(null);
   };
 
+  // Handle manual node creation (user input)
+  const handleAddNodeClick = (parentNode) => {
+    setAddNodeModal(parentNode.id);
+    setAddNodeText('');
+    setHoveredNodeId(null);
+  };
+
+  const handleAddNodeSubmit = () => {
+    if (!addNodeText.trim() || !addNodeModal) return;
+
+    const parentNode = nodes.find(n => n.id === addNodeModal);
+    if (!parentNode) return;
+
+    // Determine child node type based on parent
+    let childType, childStep, childLevel, childCategory;
+    if (parentNode.type === 'topic') {
+      childType = 'main';
+      childStep = 1;
+      childLevel = 0;
+      childCategory = null; // Will be determined
+    } else if (parentNode.type === 'main' && parentNode.step === 1) {
+      childType = 'sub';
+      childStep = 2;
+      childLevel = 1;
+      childCategory = parentNode.category;
+    } else if (parentNode.type === 'sub' && parentNode.step === 2) {
+      childType = 'insight';
+      childStep = 3;
+      childLevel = 2;
+      childCategory = parentNode.category;
+    } else if (parentNode.type === 'insight' && parentNode.step === 3) {
+      childType = 'opportunity';
+      childStep = 4;
+      childLevel = 3;
+      childCategory = parentNode.category;
+    } else {
+      // Default: create same level as parent
+      childType = parentNode.type;
+      childStep = parentNode.step;
+      childLevel = parentNode.level;
+      childCategory = parentNode.category;
+    }
+
+    // Calculate position for new node (similar to getNodePosition logic)
+    const parentPos = getNodePosition(parentNode);
+    const siblings = nodes.filter(n => {
+      const nParentId = n.parentIds ? n.parentIds[0] : n.parentId;
+      return nParentId === parentNode.id;
+    });
+    const spacing = childType === 'main' ? 150 : childType === 'sub' ? 130 : 110;
+    // Position new node: index will be siblings.length, so position = (index - 1) * spacing
+    // This centers the first child at parent, and spreads others evenly
+    const index = siblings.length;
+    const initialX = parentPos.x + (index - 1) * spacing;
+    const initialY = parentPos.y + 120;
+
+    // Create new node
+    const newNodeId = Date.now();
+    const newNode = {
+      id: newNodeId,
+      title: addNodeText.trim(), // User input becomes title
+      description: '', // Description empty initially, can be edited later
+      text: addNodeText.trim(), // For backward compatibility
+      keyword: extractKeyword(addNodeText.trim()),
+      type: childType,
+      step: childStep,
+      category: childCategory || null,
+      parentId: parentNode.id,
+      x: initialX,
+      y: initialY,
+      level: childLevel,
+      manuallyPositioned: false
+    };
+
+    // Add node with animation
+    addNodesWithAnimation([newNode], 0);
+
+    // Track event
+    trackEvent('Create Node', 'HUMAN', {
+      node_id: newNodeId.toString(),
+      new_content: addNodeText.trim(),
+      node_count: 1,
+      content_length: addNodeText.trim().length
+    });
+
+    // Update creativity metrics
+    const newMetrics = calculateCreativityIndex();
+    setCreativityHistory(prev => [...prev, newMetrics]);
+
+    // Close modal
+    setAddNodeModal(null);
+    setAddNodeText('');
+    setHoveredNodeId(null);
+  };
+
+  const handleAddNodeCancel = () => {
+    setAddNodeModal(null);
+    setAddNodeText('');
+    setHoveredNodeId(null);
+  };
+
   const handleHome = () => {
-    // Reset all data and return to landing page
+    // First, clear all localStorage data to prevent it from being restored
+    localStorage.removeItem('ideaTreeData');
+
+    // Then reset all data and return to landing page
     setNodes([]);
     setReflections([]);
     setCreativityHistory([]);
     setEditCount(0);
     setAiGenerationCount(0);
+    setEventHistory([]); // Reset event history
     setSelectedForStructure(new Set());
     setStructureSelectedNodeIds(new Set());
     setHierarchyAnalysis(null);
+    setStructureReflections([]); // Reset structure reflections
+    setStructureGridPositions({}); // Reset structure grid positions
     setCurrentStep(1);
     setDesignTopic('');
     setTopicNodeId(null);
     setLandingInputValue('');
     setMode('exploration');
-    localStorage.removeItem('ideaTreeData');
+    setCurrentPage('main'); // Reset page to main
+    setActiveTab('overview'); // Reset tab to overview
+    setSelectedNode(null);
+    setEditingNode(null);
+    setEditValue('');
+    setFocusedNode(null);
+    setFocusedReflection(null);
+    setExpandedReflectionId(null);
+    setDraggingNode(null);
+    setDragOffset({ x: 0, y: 0 });
+    setIsPanning(false);
+    setAnalyzingStructure(false);
+    setInputValue('');
   };
 
   const handleExpandAll = async () => {
@@ -1730,13 +2310,32 @@ Note:
   };
 
   const handleDelete = (nodeId) => {
+    const nodeToDelete = nodes.find(n => n.id === nodeId);
     const deleteNodeAndChildren = (id) => {
       const children = nodes.filter(n => n.parentId === id);
       children.forEach(child => deleteNodeAndChildren(child.id));
       setNodes(prev => prev.filter(n => n.id !== id));
       setReflections(prev => prev.filter(r => r.nodeId !== id));
     };
+
+    // Count total nodes to be deleted (including children)
+    const countNodesToDelete = (id) => {
+      const children = nodes.filter(n => n.parentId === id);
+      return 1 + children.reduce((sum, child) => sum + countNodesToDelete(child.id), 0);
+    };
+    const deleteCount = countNodesToDelete(nodeId);
+
     deleteNodeAndChildren(nodeId);
+
+    // Track Delete Node event
+    if (nodeToDelete) {
+      trackEvent('Delete Node', 'HUMAN', {
+        node_id: nodeId.toString(),
+        raw_content: nodeToDelete.text,
+        delete_count: deleteCount
+      });
+    }
+
     setSelectedNode(null);
     setSelectedForStructure(prev => {
       const newSet = new Set(prev);
@@ -1947,6 +2546,16 @@ Note:
     ));
   };
 
+  // Helper function to determine quadrant from impact/feasibility
+  const getQuadrant = (impact: number, feasibility: number) => {
+    const isHighImpact = impact > 5;
+    const isHighFeasibility = feasibility > 5;
+    if (isHighImpact && isHighFeasibility) return 'Quick Wins';
+    if (isHighImpact && !isHighFeasibility) return 'Big Bets';
+    if (!isHighImpact && isHighFeasibility) return 'Fill-ins';
+    return 'Maybe Later';
+  };
+
   const handleMouseUp = (e) => {
     // Check if it was a click (not a drag) in structure mode
     if (draggingNode && mode === 'structure') {
@@ -1957,6 +2566,52 @@ Note:
       // If moved less than 5px, treat it as a click and select the node
       if (movedDistance < 5) {
         setSelectedStructureNode(draggingNode);
+        setNodeInitialPosition(null);
+      } else {
+        // Node was dragged - track the event and update creativityHistory
+        const draggedNode = nodes.find(n => n.id === draggingNode);
+        if (draggedNode && hierarchyAnalysis) {
+          const analysis = hierarchyAnalysis.analysis.find(a => a.nodeId === draggingNode);
+          if (analysis && nodeInitialPosition) {
+            // Determine if node crossed quadrant boundary
+            const initialQuadrant = getQuadrant(nodeInitialPosition.impact, nodeInitialPosition.feasibility);
+            const finalQuadrant = getQuadrant(analysis.impact, analysis.feasibility);
+            const crossedBoundary = initialQuadrant !== finalQuadrant;
+
+            // Calculate move distance for within-boundary scoring
+            const moveDistance = Math.sqrt(
+              Math.pow(analysis.impact - nodeInitialPosition.impact, 2) +
+              Math.pow(analysis.feasibility - nodeInitialPosition.feasibility, 2)
+            );
+
+            // Track event according to CSV criteria
+            const eventType = crossedBoundary
+              ? 'Move Node (cross-boundary)'
+              : 'Move Node (within-boundary)';
+
+            trackEvent(eventType, 'HUMAN', {
+              node_id: draggingNode.toString(),
+              impact: analysis.impact,
+              feasibility: analysis.feasibility,
+              initial_impact: nodeInitialPosition.impact,
+              initial_feasibility: nodeInitialPosition.feasibility,
+              move_distance: moveDistance,
+              node_text: draggedNode.text || draggedNode.title || ''
+            });
+
+            // Update creativityHistory for structure mode
+            const newMetrics = calculateCreativityIndex();
+            setCreativityHistory(prev => {
+              const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+              if (structureModeStartIndex !== null && prev.length >= structureModeStartIndex) {
+                // Structure mode is active, add new entry
+                return [...prev, newMetrics];
+              }
+              return prev;
+            });
+          }
+        }
+        setNodeInitialPosition(null);
       }
     }
 
@@ -2583,6 +3238,15 @@ Note:
                           ));
                         }
 
+                        // Store initial position (impact/feasibility) for quadrant comparison
+                        const currentAnalysis = hierarchyAnalysis?.analysis.find(a => a.nodeId === node.id);
+                        if (currentAnalysis) {
+                          setNodeInitialPosition({
+                            impact: currentAnalysis.impact,
+                            feasibility: currentAnalysis.feasibility
+                          });
+                        }
+
                         setDragOffset({ x: offsetX, y: offsetY });
                         setDraggingNode(node.id);
                         setMouseDownPos({ x: e.clientX, y: e.clientY });
@@ -2743,10 +3407,16 @@ Note:
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-gray-800">Creativity Report</h1>
+                <h1 className="text-2xl font-bold text-gray-800">
+                  {activeTab === 'overview' ? 'Creativity Tracking' : 'Creativity Report'}
+                </h1>
                 <span className="text-yellow-500">★</span>
               </div>
-              <p className="text-sm text-gray-600 mt-1">Analyze your creative process using TTCT dimensions and track Human-AI collaboration patterns.</p>
+              <p className="text-sm text-gray-600 mt-1">
+                {activeTab === 'overview'
+                  ? 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'
+                  : 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'}
+              </p>
             </div>
           </div>
 
@@ -2759,7 +3429,7 @@ Note:
                 : 'text-gray-600 hover:text-gray-800'
                 }`}
             >
-              Overview
+              Process
             </button>
             <button
               onClick={() => setActiveTab('timeline')}
@@ -2768,125 +3438,85 @@ Note:
                 : 'text-gray-600 hover:text-gray-800'
                 }`}
             >
-              Timeline
+              Outcome
             </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-auto p-6">
-          {/* Overview Tab */}
+          {/* Process Tab (formerly Overview) */}
           {activeTab === 'overview' && (() => {
-            // Calculate comprehensive TTCT scores for AI vs Human
-            const calculateTTCTScores = (nodeList) => {
-              if (nodeList.length === 0) {
-                return { fluency: 0, flexibility: 0, originality: 0, elaboration: 0 };
+            // Calculate Semantic Space scores from event history
+            const calculateSemanticScores = (actor) => {
+              const events = eventHistory.filter(e => e.actor === actor);
+              if (events.length === 0) {
+                return {
+                  reframing: 0,
+                  conceptualBlending: 0,
+                  domainKnowledge: 0,
+                  evaluation: 0,
+                  constraintSetting: 0,
+                  generationExpansion: 0
+                };
               }
 
-              // Fluency: number of ideas (normalized)
-              const maxExpectedNodes = 100;
-              const fluency = Math.min(nodeList.length / maxExpectedNodes, 1);
+              // Aggregate scores from events (each event can have 0-3 points per dimension)
+              const totalReframing = events.reduce((sum, e) => sum + ((e as any).semantic_reframing_score || 0), 0);
+              const totalBlending = events.reduce((sum, e) => sum + ((e as any).semantic_blending_score || 0), 0);
+              const totalDomain = events.reduce((sum, e) => sum + ((e as any).semantic_domain_score || 0), 0);
+              const totalEvaluation = events.reduce((sum, e) => sum + ((e as any).semantic_evaluation_score || 0), 0);
+              const totalConstraint = events.reduce((sum, e) => sum + ((e as any).semantic_constraint_score || 0), 0);
+              const totalGenerative = events.reduce((sum, e) => sum + ((e as any).semantic_generative_score || 0), 0);
 
-              // Flexibility: variety of categories
-              const uniqueTypes = new Set(nodeList.map(n => n.type));
-              const flexibility = uniqueTypes.size / 4; // max 4 types
-
-              // Originality: novelty (semantic similarity)
-              const calculateSimilarity = (text1, text2) => {
-                if (!text1 || !text2) return 0;
-                const words1 = new Set(text1.toLowerCase().split(/\s+/));
-                const words2 = new Set(text2.toLowerCase().split(/\s+/));
-                const intersection = new Set([...words1].filter(w => words2.has(w)));
-                const union = new Set([...words1, ...words2]);
-                return union.size > 0 ? intersection.size / union.size : 0;
-              };
-
-              let totalSimilarity = 0;
-              let comparisonCount = 0;
-              for (let i = 0; i < nodeList.length; i++) {
-                for (let j = i + 1; j < nodeList.length; j++) {
-                  totalSimilarity += calculateSimilarity(nodeList[i].text, nodeList[j].text);
-                  comparisonCount++;
-                }
-              }
-              const avgSimilarity = comparisonCount > 0 ? totalSimilarity / comparisonCount : 0;
-              const originality = 1 - avgSimilarity;
-
-              // Elaboration: depth and linkage
-              const edges = nodeList.filter(n => n.parentId || (n.parentIds && n.parentIds.length > 0)).length;
-              const density = nodeList.length > 0 ? edges / nodeList.length : 0;
-              const avgLength = nodeList.length > 0
-                ? nodeList.reduce((sum, n) => sum + (n.text?.length || 0), 0) / nodeList.length
-                : 0;
-              const maxExpectedLength = 100;
-              const lengthScore = Math.min(avgLength / maxExpectedLength, 1);
-              const elaboration = (density * 0.5) + (lengthScore * 0.5);
+              // Normalize: Use average score per event (max 3 per event), then normalize to 0-1
+              // This gives more meaningful scores even with few events
+              const avgReframing = events.length > 0 ? totalReframing / events.length : 0;
+              const avgBlending = events.length > 0 ? totalBlending / events.length : 0;
+              const avgDomain = events.length > 0 ? totalDomain / events.length : 0;
+              const avgEvaluation = events.length > 0 ? totalEvaluation / events.length : 0;
+              const avgConstraint = events.length > 0 ? totalConstraint / events.length : 0;
+              const avgGenerative = events.length > 0 ? totalGenerative / events.length : 0;
 
               return {
-                fluency: Math.max(0, Math.min(1, fluency)),
-                flexibility: Math.max(0, Math.min(1, flexibility)),
-                originality: Math.max(0, Math.min(1, originality)),
-                elaboration: Math.max(0, Math.min(1, elaboration))
+                reframing: Math.min(avgReframing / 3, 1), // Normalize: avg score (0-3) / 3 = 0-1
+                conceptualBlending: Math.min(avgBlending / 3, 1),
+                domainKnowledge: Math.min(avgDomain / 3, 1),
+                evaluation: Math.min(avgEvaluation / 3, 1),
+                constraintSetting: Math.min(avgConstraint / 3, 1),
+                generationExpansion: Math.min(avgGenerative / 3, 1)
               };
             };
 
-            // Separate AI and Human nodes
-            // AI nodes: generated by AI without any user interaction
-            // Human nodes: any node that has been interacted with by the user:
-            //   - Edited (text changed)
-            //   - Manually created (Add button)
-            //   - Manually positioned (dragged in exploration mode)
-            //   - Adjusted in structure mode (impact/feasibility changed via drag)
-            //   - Or if structureGridPositions exists (user dragged in structure mode)
-            const aiNodes = nodes.filter(n => {
-              const hasUserInteraction =
-                n.manuallyCreated ||
-                n.edited ||
-                n.manuallyPositioned ||
-                n.structureAdjusted ||
-                structureGridPositions[n.id]; // Dragged in structure mode
-              return !hasUserInteraction;
-            });
-            const humanNodes = nodes.filter(n => {
-              return n.manuallyCreated ||
-                n.edited ||
-                n.manuallyPositioned ||
-                n.structureAdjusted ||
-                structureGridPositions[n.id]; // Dragged in structure mode
-            });
+            // Calculate scores for AI and Human
+            const aiScores = calculateSemanticScores('AI');
+            const humanScores = calculateSemanticScores('HUMAN');
 
-            // If no human nodes, consider all nodes as AI
-            const effectiveHumanNodes = humanNodes.length > 0 ? humanNodes : [];
-            const effectiveAiNodes = aiNodes.length > 0 ? aiNodes : nodes;
-
-            // Calculate scores
-            const aiScores = calculateTTCTScores(effectiveAiNodes);
-            const humanScores = calculateTTCTScores(effectiveHumanNodes);
-
-            // Determine strengths
+            // Determine strengths for 6 dimensions
             const getStrengths = (scores) => {
               const strengths = [];
-              if (scores.flexibility > 0.7) strengths.push('Flexibility');
-              if (scores.originality > 0.7) strengths.push('Originality');
-              if (scores.fluency > 0.7) strengths.push('Fluency');
-              if (scores.elaboration > 0.7) strengths.push('Elaboration');
+              if (scores.reframing > 0.7) strengths.push('Reframing');
+              if (scores.conceptualBlending > 0.7) strengths.push('Conceptual Blending');
+              if (scores.domainKnowledge > 0.7) strengths.push('Domain Knowledge');
+              if (scores.evaluation > 0.7) strengths.push('Evaluation');
+              if (scores.constraintSetting > 0.7) strengths.push('Constraint Setting');
+              if (scores.generationExpansion > 0.7) strengths.push('Generation Expansion');
               return strengths.length > 0 ? strengths.join(' & ') : 'Balanced';
             };
 
             const aiStrengths = getStrengths(aiScores);
             const humanStrengths = getStrengths(humanScores);
 
-            // Generate insight
-            const generateInsight = () => {
-              if (humanScores.originality > aiScores.originality && humanScores.flexibility > aiScores.flexibility) {
-                return "Your originality and flexibility scores are higher than AI contributions, indicating strong creative independence.";
-              } else if (humanScores.originality > aiScores.originality) {
-                return "Your originality score is higher than AI contributions, showing unique creative thinking.";
-              } else if (humanScores.flexibility > aiScores.flexibility) {
-                return "Your flexibility score is higher than AI contributions, demonstrating diverse perspectives.";
-              } else if (aiScores.fluency > humanScores.fluency && aiScores.elaboration > humanScores.elaboration) {
-                return "AI contributions excel in fluency and elaboration, providing a strong foundation for your creative process.";
+            // Generate collaboration pattern insight
+            const generateCollaborationInsight = () => {
+              const humanTotal = Object.values(humanScores).reduce((a, b) => a + b, 0);
+              const aiTotal = Object.values(aiScores).reduce((a, b) => a + b, 0);
+
+              if (humanTotal > aiTotal * 1.2) {
+                return "Human-Led Exploration → AI-Assisted Refinement";
+              } else if (aiTotal > humanTotal * 1.2) {
+                return "AI-Led Exploration → Human-Led Structure";
               } else {
-                return "Your creative process shows a balanced collaboration between human insight and AI assistance.";
+                return "Balanced Co-Creation";
               }
             };
 
@@ -2894,17 +3524,17 @@ Note:
               <div className="space-y-8">
                 {/* Two Column Layout */}
                 <div className="grid grid-cols-2 gap-6">
-                  {/* Left: TTCT Creativity Dimensions - Radar Chart */}
+                  {/* Left: Co-Creative Competence Distribution - Radar Chart */}
                   <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">TTCT Creativity Dimensions</h3>
-                    <div className="relative h-80 flex items-center justify-center">
-                      <svg width="300" height="300" viewBox="0 0 300 300" className="absolute">
+                    <h3 className="text-lg font-bold text-gray-800 mb-8">Co-Creative Competence Distribution</h3>
+                    <div className="flex items-center justify-center overflow-visible my-8">
+                      <svg width="400" height="400" viewBox="0 0 400 400" style={{ overflow: 'visible' }}>
                         {/* Grid circles */}
                         {[25, 50, 75, 100].map((radius) => (
                           <circle
                             key={radius}
-                            cx="150"
-                            cy="150"
+                            cx="200"
+                            cy="200"
                             r={radius * 1.5}
                             fill="none"
                             stroke="#e5e7eb"
@@ -2913,62 +3543,92 @@ Note:
                           />
                         ))}
 
-                        {/* Axes - 4 axes evenly distributed */}
+                        {/* Axes - 6 axes evenly distributed (60 degrees apart) */}
                         {[
-                          { label: 'Fluency', angle: -90 },
-                          { label: 'Flexibility', angle: 0 },
-                          { label: 'Originality', angle: 90 },
-                          { label: 'Elaboration', angle: 180 }
+                          { label: 'Reframing', angle: -90 },
+                          { label: 'Conceptual Blending', angle: -30 },
+                          { label: 'Domain knowledge', angle: 30 },
+                          { label: 'Evaluation', angle: 90 },
+                          { label: 'Constraint Setting', angle: 150 },
+                          { label: 'Generation Expansion', angle: -150 }
                         ].map((axis, idx) => {
                           const angle = (axis.angle * Math.PI) / 180;
-                          const x = 150 + 150 * Math.cos(angle);
-                          const y = 150 + 150 * Math.sin(angle);
+                          const centerX = 200;
+                          const centerY = 200;
+                          const axisLength = 150;
+                          const x = centerX + axisLength * Math.cos(angle);
+                          const y = centerY + axisLength * Math.sin(angle);
+
+                          // Calculate label position (further out from axis end)
+                          const labelDistance = 30; // Distance from axis end
+                          const labelX = centerX + (axisLength + labelDistance) * Math.cos(angle);
+                          const labelY = centerY + (axisLength + labelDistance) * Math.sin(angle);
+
                           return (
                             <g key={axis.label}>
                               <line
-                                x1="150"
-                                y1="150"
+                                x1={centerX}
+                                y1={centerY}
                                 x2={x}
                                 y2={y}
                                 stroke="#d1d5db"
                                 strokeWidth="1"
                               />
-                              <text
-                                x={x + (x > 150 ? 10 : x < 150 ? -10 : 0)}
-                                y={y + (y > 150 ? 15 : y < 150 ? -5 : 0)}
-                                fontSize="12"
-                                fill="#6b7280"
-                                textAnchor={x > 150 ? 'start' : x < 150 ? 'end' : 'middle'}
-                                fontWeight="500"
-                              >
-                                {axis.label}
-                              </text>
+                              {/* Text with background for visibility */}
+                              <g>
+                                {/* Background rectangle for text */}
+                                <rect
+                                  x={labelX - (axis.label.length * 3.5)}
+                                  y={labelY - 8}
+                                  width={axis.label.length * 7}
+                                  height={16}
+                                  fill="white"
+                                  fillOpacity="0.9"
+                                  stroke="none"
+                                  rx="2"
+                                />
+                                <text
+                                  x={labelX}
+                                  y={labelY + 4}
+                                  fontSize="11"
+                                  fill="#374151"
+                                  textAnchor="middle"
+                                  fontWeight="600"
+                                  style={{ pointerEvents: 'none' }}
+                                >
+                                  {axis.label}
+                                </text>
+                              </g>
                             </g>
                           );
                         })}
 
-                        {/* AI Polygon (pink) */}
+                        {/* AI Polygon (orange) */}
                         <polygon
                           points={[
-                            `${150 + aiScores.fluency * 150 * Math.cos(-90 * Math.PI / 180)},${150 + aiScores.fluency * 150 * Math.sin(-90 * Math.PI / 180)}`,
-                            `${150 + aiScores.flexibility * 150 * Math.cos(0 * Math.PI / 180)},${150 + aiScores.flexibility * 150 * Math.sin(0 * Math.PI / 180)}`,
-                            `${150 + aiScores.originality * 150 * Math.cos(90 * Math.PI / 180)},${150 + aiScores.originality * 150 * Math.sin(90 * Math.PI / 180)}`,
-                            `${150 + aiScores.elaboration * 150 * Math.cos(180 * Math.PI / 180)},${150 + aiScores.elaboration * 150 * Math.sin(180 * Math.PI / 180)}`
+                            `${200 + aiScores.reframing * 150 * Math.cos(-90 * Math.PI / 180)},${200 + aiScores.reframing * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                            `${200 + aiScores.conceptualBlending * 150 * Math.cos(-30 * Math.PI / 180)},${200 + aiScores.conceptualBlending * 150 * Math.sin(-30 * Math.PI / 180)}`,
+                            `${200 + aiScores.domainKnowledge * 150 * Math.cos(30 * Math.PI / 180)},${200 + aiScores.domainKnowledge * 150 * Math.sin(30 * Math.PI / 180)}`,
+                            `${200 + aiScores.evaluation * 150 * Math.cos(90 * Math.PI / 180)},${200 + aiScores.evaluation * 150 * Math.sin(90 * Math.PI / 180)}`,
+                            `${200 + aiScores.constraintSetting * 150 * Math.cos(150 * Math.PI / 180)},${200 + aiScores.constraintSetting * 150 * Math.sin(150 * Math.PI / 180)}`,
+                            `${200 + aiScores.generationExpansion * 150 * Math.cos(-150 * Math.PI / 180)},${200 + aiScores.generationExpansion * 150 * Math.sin(-150 * Math.PI / 180)}`
                           ].join(' ')}
-                          fill="#ec4899"
+                          fill="#f97316"
                           fillOpacity="0.3"
-                          stroke="#ec4899"
+                          stroke="#f97316"
                           strokeWidth="2"
                         />
 
                         {/* Human Polygon (purple) */}
-                        {effectiveHumanNodes.length > 0 && (
+                        {eventHistory.some(e => e.actor === 'HUMAN') && (
                           <polygon
                             points={[
-                              `${150 + humanScores.fluency * 150 * Math.cos(-90 * Math.PI / 180)},${150 + humanScores.fluency * 150 * Math.sin(-90 * Math.PI / 180)}`,
-                              `${150 + humanScores.flexibility * 150 * Math.cos(0 * Math.PI / 180)},${150 + humanScores.flexibility * 150 * Math.sin(0 * Math.PI / 180)}`,
-                              `${150 + humanScores.originality * 150 * Math.cos(90 * Math.PI / 180)},${150 + humanScores.originality * 150 * Math.sin(90 * Math.PI / 180)}`,
-                              `${150 + humanScores.elaboration * 150 * Math.cos(180 * Math.PI / 180)},${150 + humanScores.elaboration * 150 * Math.sin(180 * Math.PI / 180)}`
+                              `${200 + humanScores.reframing * 150 * Math.cos(-90 * Math.PI / 180)},${200 + humanScores.reframing * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                              `${200 + humanScores.conceptualBlending * 150 * Math.cos(-30 * Math.PI / 180)},${200 + humanScores.conceptualBlending * 150 * Math.sin(-30 * Math.PI / 180)}`,
+                              `${200 + humanScores.domainKnowledge * 150 * Math.cos(30 * Math.PI / 180)},${200 + humanScores.domainKnowledge * 150 * Math.sin(30 * Math.PI / 180)}`,
+                              `${200 + humanScores.evaluation * 150 * Math.cos(90 * Math.PI / 180)},${200 + humanScores.evaluation * 150 * Math.sin(90 * Math.PI / 180)}`,
+                              `${200 + humanScores.constraintSetting * 150 * Math.cos(150 * Math.PI / 180)},${200 + humanScores.constraintSetting * 150 * Math.sin(150 * Math.PI / 180)}`,
+                              `${200 + humanScores.generationExpansion * 150 * Math.cos(-150 * Math.PI / 180)},${200 + humanScores.generationExpansion * 150 * Math.sin(-150 * Math.PI / 180)}`
                             ].join(' ')}
                             fill="#8b5cf6"
                             fillOpacity="0.3"
@@ -2978,124 +3638,698 @@ Note:
                         )}
                       </svg>
                     </div>
-                    <div className="flex items-center justify-center gap-4 mt-4">
+                    <div className="flex items-center justify-center gap-4 mt-12">
                       <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-pink-500"></div>
+                        <div className="w-4 h-4 rounded bg-orange-500"></div>
                         <span className="text-sm text-gray-700">AI</span>
                       </div>
-                      {effectiveHumanNodes.length > 0 && (
+                      {eventHistory.some(e => e.actor === 'HUMAN') && (
                         <div className="flex items-center gap-2">
                           <div className="w-4 h-4 rounded bg-purple-500"></div>
                           <span className="text-sm text-gray-700">Human</span>
                         </div>
                       )}
-                    </div>
-                    <div className="mt-4 bg-purple-50 rounded-lg p-4">
-                      <p className="text-sm text-gray-700">{generateInsight()}</p>
                     </div>
                   </div>
 
-                  {/* Right: Side-by-Side Comparison - Bar Chart */}
+                  {/* Right: Collaboration Patterns */}
                   <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">Side-by-Side Comparison</h3>
-                    <div className="h-80 flex flex-col justify-between">
-                      {['fluency', 'flexibility', 'originality', 'elaboration'].map((dimension, idx) => {
-                        const aiValue = aiScores[dimension] * 100;
-                        const humanValue = effectiveHumanNodes.length > 0 ? humanScores[dimension] * 100 : 0;
-                        const dimensionLabel = dimension.charAt(0).toUpperCase() + dimension.slice(1);
-                        return (
-                          <div key={dimension} className="flex items-center gap-4">
-                            <div className="w-24 text-sm text-gray-600 font-medium">{dimensionLabel}</div>
-                            <div className="flex-1 flex items-center gap-3">
-                              {/* AI Bar */}
-                              <div className="flex-1 h-10 bg-gray-100 rounded relative overflow-hidden">
-                                <div
-                                  className="h-full bg-pink-500 rounded flex items-center justify-end pr-2"
-                                  style={{ width: `${aiValue}%` }}
-                                >
-                                  <span className="text-xs font-semibold text-white">{Math.round(aiValue)}%</span>
-                                </div>
-                                {aiValue < 10 && (
-                                  <div className="absolute inset-0 flex items-center justify-start pl-2">
-                                    <span className="text-xs font-semibold text-gray-700">{Math.round(aiValue)}%</span>
-                                  </div>
-                                )}
-                              </div>
-                              {/* Human Bar */}
-                              {effectiveHumanNodes.length > 0 ? (
-                                <div className="flex-1 h-10 bg-gray-100 rounded relative overflow-hidden">
-                                  <div
-                                    className="h-full bg-purple-500 rounded flex items-center justify-end pr-2"
-                                    style={{ width: `${humanValue}%` }}
-                                  >
-                                    <span className="text-xs font-semibold text-white">{Math.round(humanValue)}%</span>
-                                  </div>
-                                  {humanValue < 10 && (
-                                    <div className="absolute inset-0 flex items-center justify-start pl-2">
-                                      <span className="text-xs font-semibold text-gray-700">{Math.round(humanValue)}%</span>
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="flex-1 h-10 bg-gray-100 rounded flex items-center justify-center">
-                                  <span className="text-xs text-gray-400">No human data</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center justify-center gap-4 mt-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-pink-500"></div>
-                        <span className="text-sm text-gray-700">AI</span>
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Collaboration Patterns</h3>
+                    <div className="flex flex-col items-center justify-center h-80">
+                      {/* Network/Graph Icon */}
+                      <div className="w-32 h-32 bg-purple-100 rounded-lg flex items-center justify-center mb-6">
+                        <svg width="80" height="80" viewBox="0 0 100 100" className="text-purple-600">
+                          {/* Simple network graph icon */}
+                          <circle cx="30" cy="30" r="8" fill="currentColor" />
+                          <circle cx="70" cy="30" r="8" fill="currentColor" />
+                          <circle cx="50" cy="70" r="8" fill="currentColor" />
+                          <line x1="30" y1="30" x2="50" y2="70" stroke="currentColor" strokeWidth="2" />
+                          <line x1="70" y1="30" x2="50" y2="70" stroke="currentColor" strokeWidth="2" />
+                          <line x1="30" y1="30" x2="70" y2="30" stroke="currentColor" strokeWidth="2" />
+                        </svg>
                       </div>
-                      {effectiveHumanNodes.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded bg-purple-500"></div>
-                          <span className="text-sm text-gray-700">Human</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 mt-4">
-                      <div className="bg-purple-50 rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs">👤</div>
-                          <span className="text-sm font-semibold text-gray-800">Your Strength</span>
-                        </div>
-                        <p className="text-xs text-gray-600">{humanStrengths}</p>
-                      </div>
-                      <div className="bg-pink-50 rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-6 h-6 rounded-full bg-pink-500 flex items-center justify-center text-white text-xs">✨</div>
-                          <span className="text-sm font-semibold text-gray-800">AI Strength</span>
-                        </div>
-                        <p className="text-xs text-gray-600">{aiStrengths}</p>
+                      <p className="text-lg font-semibold text-gray-800 mb-4 text-center">
+                        {generateCollaborationInsight()}
+                      </p>
+                      <div className="bg-purple-50 rounded-lg p-4 w-full">
+                        <p className="text-sm font-semibold text-gray-700 mb-2">Insight:</p>
+                        <p className="text-sm text-gray-600">
+                          {humanScores.evaluation > aiScores.evaluation && humanScores.constraintSetting > aiScores.constraintSetting
+                            ? "Your evaluation and constraint setting scores are higher than AI contributions, indicating strong decision-making and focus."
+                            : aiScores.reframing > humanScores.reframing && aiScores.conceptualBlending > humanScores.conceptualBlending
+                              ? "AI contributions excel in reframing and conceptual blending, providing diverse perspectives and novel connections."
+                              : "Your creative process shows a balanced collaboration between human insight and AI assistance."}
+                        </p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Understanding TTCT Dimensions */}
-                <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4">Understanding TTCT Dimensions</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h4 className="font-semibold text-gray-800 mb-2">Fluency</h4>
-                      <p className="text-sm text-gray-600">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
+                {/* Creative Flow Timeline Graph - Large version for Process tab */}
+                <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
+                  <div className="mb-4">
+                    <h3 className="text-xl font-bold text-gray-800 mb-2">Creative Flow Timeline</h3>
+                    <p className="text-sm text-gray-600">Track your creativity and dependency scores over time</p>
+                  </div>
+                  <div className="border-t border-gray-200 pt-4">
+                    {/* Mode labels - above graph */}
+                    {(() => {
+                      const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+                      const pointCount = creativityHistory.length;
+                      const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
+                      const getXPosition = (index) => {
+                        if (pointCount === 0) return 100;
+                        if (pointCount === 1) return 100;
+                        const minX = 0;
+                        const maxX = 200;
+                        return minX + (index / (pointCount - 1)) * (maxX - minX);
+                      };
+                      const modeDivisionX = hasStructureMode && pointCount > 1
+                        ? getXPosition(structureModeStartIndex)
+                        : null;
+
+                      // Calculate percentage for positioning
+                      const modeDivisionPercent = modeDivisionX !== null ? (modeDivisionX / 200) * 100 : 0;
+
+                      return (
+                        <div className="relative mb-2 h-6">
+                          {hasStructureMode && modeDivisionX !== null ? (
+                            <>
+                              <div className="absolute left-0 flex items-center gap-2" style={{ width: `${modeDivisionPercent}%` }}>
+                                <div className="w-4 h-4 rounded bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
+                                  <svg className="w-3 h-3 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                  </svg>
+                                </div>
+                                <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
+                              </div>
+                              <div className="absolute right-0 flex items-center gap-2 justify-end" style={{ width: `${100 - modeDivisionPercent}%` }}>
+                                <span className="text-xs font-semibold text-orange-600">Structure Mode</span>
+                                <div className="w-4 h-4 rounded bg-orange-500/20 border border-orange-500/40 flex items-center justify-center">
+                                  <svg className="w-3 h-3 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-4 rounded bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
+                                <svg className="w-3 h-3 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                              </div>
+                              <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    <div className="relative h-[400px] bg-gray-50 rounded-lg overflow-hidden">
+                      {/* Y-axis label - outside graph */}
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-12 transform -rotate-90 origin-center">
+                        <span className="text-xs font-medium text-gray-600">Score (%)</span>
+                      </div>
+
+                      {/* Tooltip */}
+                      {hoveredPointIndex !== null && (() => {
+                        // Calculate semantic scores up to this point
+                        const pointEvents = eventHistory.slice(0, hoveredPointIndex + 1);
+                        const calculateSemanticScores = (actor) => {
+                          const events = pointEvents.filter(e => e.actor === actor);
+                          if (events.length === 0) {
+                            return {
+                              reframing: 0,
+                              conceptualBlending: 0,
+                              domainKnowledge: 0,
+                              evaluation: 0,
+                              constraintSetting: 0,
+                              generationExpansion: 0
+                            };
+                          }
+                          const totalReframing = events.reduce((sum, e) => sum + ((e as any).semantic_reframing_score || 0), 0);
+                          const totalBlending = events.reduce((sum, e) => sum + ((e as any).semantic_blending_score || 0), 0);
+                          const totalDomain = events.reduce((sum, e) => sum + ((e as any).semantic_domain_score || 0), 0);
+                          const totalEvaluation = events.reduce((sum, e) => sum + ((e as any).semantic_evaluation_score || 0), 0);
+                          const totalConstraint = events.reduce((sum, e) => sum + ((e as any).semantic_constraint_score || 0), 0);
+                          const totalGenerative = events.reduce((sum, e) => sum + ((e as any).semantic_generative_score || 0), 0);
+                          const avgReframing = events.length > 0 ? totalReframing / events.length : 0;
+                          const avgBlending = events.length > 0 ? totalBlending / events.length : 0;
+                          const avgDomain = events.length > 0 ? totalDomain / events.length : 0;
+                          const avgEvaluation = events.length > 0 ? totalEvaluation / events.length : 0;
+                          const avgConstraint = events.length > 0 ? totalConstraint / events.length : 0;
+                          const avgGenerative = events.length > 0 ? totalGenerative / events.length : 0;
+                          return {
+                            reframing: Math.min(avgReframing / 3, 1),
+                            conceptualBlending: Math.min(avgBlending / 3, 1),
+                            domainKnowledge: Math.min(avgDomain / 3, 1),
+                            evaluation: Math.min(avgEvaluation / 3, 1),
+                            constraintSetting: Math.min(avgConstraint / 3, 1),
+                            generationExpansion: Math.min(avgGenerative / 3, 1)
+                          };
+                        };
+                        const aiScores = calculateSemanticScores('AI');
+                        const metrics = creativityHistory[hoveredPointIndex];
+                        const humanRatio = typeof metrics === 'object' ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0) : 0;
+                        const aiRatio = typeof metrics === 'object' ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0) : 0;
+                        const aiScoreTotal = typeof metrics === 'object' ? (metrics.ai_score_total ?? 0) : 0;
+                        const humanScoreTotal = typeof metrics === 'object' ? (metrics.human_score_total ?? 0) : 0;
+                        const totalScore = aiScoreTotal + humanScoreTotal;
+                        // Calculate tooltip position to stay within bounds
+                        const tooltipWidth = 280;
+                        const tooltipHeight = 200;
+                        const containerHeight = 400;
+                        const margin = 10;
+
+                        // Check if tooltip should be above or below the point
+                        const showAbove = tooltipPosition.y > tooltipHeight + margin + 20;
+
+                        // Get container width for X position calculation
+                        const containerElement = document.querySelector('.relative.h-\\[400px\\]');
+                        const containerWidth = containerElement?.getBoundingClientRect().width || 800;
+
+                        // Calculate X position (clamp to container bounds)
+                        const tooltipLeft = tooltipPosition.x - tooltipWidth / 2;
+                        const tooltipRight = tooltipPosition.x + tooltipWidth / 2;
+                        let xPos = tooltipPosition.x;
+                        if (tooltipLeft < margin) {
+                          xPos = tooltipWidth / 2 + margin;
+                        } else if (tooltipRight > containerWidth - margin) {
+                          xPos = containerWidth - tooltipWidth / 2 - margin;
+                        }
+
+                        // Calculate Y position
+                        const yPos = showAbove
+                          ? Math.max(margin, tooltipPosition.y - tooltipHeight - margin)
+                          : Math.min(tooltipPosition.y + 20, containerHeight - tooltipHeight - margin);
+
+                        return (
+                          <div
+                            className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
+                            style={{
+                              left: `${xPos}px`,
+                              top: `${yPos}px`,
+                              transform: 'translateX(-50%)',
+                              maxWidth: '280px',
+                              width: '280px'
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-semibold text-orange-600">Ratio:</span>
+                                <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-orange-600">Total AI Score:</span>
+                                <span>{aiScoreTotal.toFixed(1)}</span>
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              <span className="font-semibold">Framework Name:</span>
+                              <span className="ml-2">Co-Creative Competence</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <div className="text-gray-700">Generation Expansion: {(aiScores.generationExpansion * 100).toFixed(0)}%</div>
+                                <div className="text-gray-700">Conceptual Blending: {(aiScores.conceptualBlending * 100).toFixed(0)}%</div>
+                                <div className="text-gray-700">Constraint Setting: {(aiScores.constraintSetting * 100).toFixed(0)}%</div>
+                              </div>
+                              <div>
+                                <div className="text-gray-700">Reframing: {(aiScores.reframing * 100).toFixed(0)}%</div>
+                                <div className="text-gray-700">Evaluation: {(aiScores.evaluation * 100).toFixed(0)}%</div>
+                                <div className="text-gray-700">Domain Knowledge: {(aiScores.domainKnowledge * 100).toFixed(0)}%</div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <svg className="w-full h-full" viewBox="-25 0 325 100" preserveAspectRatio="xMidYMid meet">
+                        {/* Background gradients */}
+                        <defs>
+                          {/* Gradient for Human area */}
+                          <linearGradient id="humanGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
+                            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
+                          </linearGradient>
+                          {/* Gradient for AI area */}
+                          <linearGradient id="aiGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="#f97316" stopOpacity="0.3" />
+                            <stop offset="100%" stopColor="#f97316" stopOpacity="0.05" />
+                          </linearGradient>
+                        </defs>
+                        <rect x="0" y="0" width="300" height="100" fill="transparent" />
+
+                        {/* Calculate X positions to fill the box */}
+                        {(() => {
+                          const pointCount = creativityHistory.length;
+                          const getXPosition = (index) => {
+                            if (pointCount === 0) return 150;
+                            if (pointCount === 1) return 150;
+                            const minX = 0;
+                            const maxX = 300;
+                            return minX + (index / (pointCount - 1)) * (maxX - minX);
+                          };
+
+                          // Determine Structure Mode start index
+                          const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+                          const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
+
+                          // Calculate mode division point
+                          const modeDivisionX = hasStructureMode && pointCount > 1
+                            ? getXPosition(structureModeStartIndex)
+                            : null;
+
+                          // Generate smooth curve paths using cubic bezier curves
+                          const getSmoothPath = (points) => {
+                            if (points.length < 2) return '';
+                            if (points.length === 2) {
+                              return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
+                            }
+
+                            let path = `M ${points[0].x},${points[0].y}`;
+
+                            for (let i = 0; i < points.length - 1; i++) {
+                              const current = points[i];
+                              const next = points[i + 1];
+
+                              // Calculate control points for smooth curve
+                              let cp1x, cp1y, cp2x, cp2y;
+
+                              if (i === 0) {
+                                // First segment: use current point and next point
+                                const dx = (next.x - current.x) / 3;
+                                const dy = (next.y - current.y) / 3;
+                                cp1x = current.x + dx;
+                                cp1y = current.y + dy;
+                                cp2x = next.x - dx;
+                                cp2y = next.y - dy;
+                              } else if (i === points.length - 2) {
+                                // Last segment
+                                const prev = points[i - 1];
+                                const dx = (next.x - prev.x) / 6;
+                                const dy = (next.y - prev.y) / 6;
+                                cp1x = current.x + dx;
+                                cp1y = current.y + dy;
+                                cp2x = next.x - dx;
+                                cp2y = next.y - dy;
+                              } else {
+                                // Middle segments: use previous and next points for smoothness
+                                const prev = points[i - 1];
+                                const after = points[i + 2];
+                                const dx1 = (next.x - prev.x) / 6;
+                                const dy1 = (next.y - prev.y) / 6;
+                                const dx2 = (after.x - current.x) / 6;
+                                const dy2 = (after.y - current.y) / 6;
+                                cp1x = current.x + dx1;
+                                cp1y = current.y + dy1;
+                                cp2x = next.x - dx2;
+                                cp2y = next.y - dy2;
+                              }
+
+                              path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${next.x},${next.y}`;
+                            }
+
+                            return path;
+                          };
+
+                          // Generate area paths for gradient fills (smooth curves)
+                          const getHumanAreaPath = () => {
+                            if (pointCount === 0) return '';
+                            const points = creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const humanScore = typeof metrics === 'object'
+                                ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                                : 0;
+                              const y = 90 - (humanScore * 80);
+                              return { x, y };
+                            });
+                            const firstX = getXPosition(0);
+                            const lastX = getXPosition(pointCount - 1);
+                            const smoothPath = getSmoothPath(points);
+                            return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
+                          };
+
+                          const getAIAreaPath = () => {
+                            if (pointCount === 0) return '';
+                            const points = creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const aiScore = typeof metrics === 'object'
+                                ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                                : 0;
+                              const y = 90 - (aiScore * 80);
+                              return { x, y };
+                            });
+                            const firstX = getXPosition(0);
+                            const lastX = getXPosition(pointCount - 1);
+                            const smoothPath = getSmoothPath(points);
+                            return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
+                          };
+
+                          // Generate smooth line path
+                          const getHumanLinePath = () => {
+                            if (pointCount === 0) return '';
+                            const points = creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const humanScore = typeof metrics === 'object'
+                                ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                                : 0;
+                              const y = 90 - (humanScore * 80);
+                              return { x, y };
+                            });
+                            return getSmoothPath(points);
+                          };
+
+                          const getAILinePath = () => {
+                            if (pointCount === 0) return '';
+                            const points = creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const aiScore = typeof metrics === 'object'
+                                ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                                : 0;
+                              const y = 90 - (aiScore * 80);
+                              return { x, y };
+                            });
+                            return getSmoothPath(points);
+                          };
+
+                          // Y-axis tick marks and labels
+                          const yAxisTicks = [0, 0.25, 0.5, 0.75, 1];
+
+                          // Calculate X-axis time labels
+                          const getTimeLabels = () => {
+                            if (eventHistory.length === 0 || pointCount === 0) {
+                              // Fallback: show labels at start, middle, end
+                              if (pointCount === 0) return [];
+                              if (pointCount === 1) return [{ index: 0, minutes: 0, x: getXPosition(0) }];
+                              return [
+                                { index: 0, minutes: 0, x: getXPosition(0) },
+                                { index: Math.floor(pointCount / 2), minutes: Math.floor(pointCount * 7.5), x: getXPosition(Math.floor(pointCount / 2)) },
+                                { index: pointCount - 1, minutes: Math.floor(pointCount * 15), x: getXPosition(pointCount - 1) }
+                              ];
+                            }
+
+                            // Get timestamps for each creativityHistory entry
+                            const timestamps = [];
+                            let eventIndex = 0;
+                            for (let i = 0; i < pointCount; i++) {
+                              if (i === 0) {
+                                timestamps.push(eventHistory[0]?.timestamp || new Date().toISOString());
+                              } else {
+                                const eventsPerEntry = Math.max(1, Math.floor(eventHistory.length / pointCount));
+                                eventIndex = Math.min(eventIndex + eventsPerEntry, eventHistory.length - 1);
+                                timestamps.push(eventHistory[eventIndex]?.timestamp || new Date().toISOString());
+                              }
+                            }
+
+                            // Calculate time in minutes from start
+                            const startTime = new Date(timestamps[0]);
+                            const timeLabels = timestamps.map((ts, idx) => {
+                              const time = new Date(ts);
+                              const minutes = Math.floor((time.getTime() - startTime.getTime()) / (1000 * 60));
+                              return { index: idx, minutes, x: getXPosition(idx) };
+                            });
+
+                            // Filter to show only a few labels (start, middle, end, and key points)
+                            if (timeLabels.length <= 3) return timeLabels;
+
+                            const filtered = [
+                              timeLabels[0], // Start
+                              ...(timeLabels.length > 2 ? [timeLabels[Math.floor(timeLabels.length / 2)]] : []), // Middle
+                              timeLabels[timeLabels.length - 1] // End
+                            ];
+
+                            // Add Structure Mode start point if it exists
+                            if (structureModeStartIndex !== null && structureModeStartIndex > 0 && structureModeStartIndex < timeLabels.length) {
+                              const structureLabel = timeLabels[structureModeStartIndex];
+                              if (!filtered.find(l => l.index === structureLabel.index)) {
+                                filtered.push(structureLabel);
+                              }
+                            }
+
+                            return filtered.sort((a, b) => a.index - b.index);
+                          };
+
+                          const timeLabels = getTimeLabels();
+
+                          return (
+                            <>
+                              {/* Y-axis tick marks and labels */}
+                              {yAxisTicks.map((value) => {
+                                const y = 90 - (value * 80);
+                                return (
+                                  <g key={`y-tick-${value}`}>
+                                    {/* Tick line */}
+                                    <line
+                                      x1="0"
+                                      y1={y}
+                                      x2="4"
+                                      y2={y}
+                                      stroke="#d1d5db"
+                                      strokeWidth="0.8"
+                                      opacity="0.5"
+                                    />
+                                    {/* Label - positioned at SVG left edge */}
+                                    <text
+                                      x="-10"
+                                      y={y + 2.5}
+                                      fontSize="5"
+                                      fill="#9ca3af"
+                                      fontWeight="400"
+                                      textAnchor="end"
+                                    >
+                                      {value.toFixed(2)}
+                                    </text>
+                                  </g>
+                                );
+                              })}
+
+                              {/* X-axis time labels */}
+                              {timeLabels.map((label, idx) => (
+                                <g key={`time-label-${idx}`}>
+                                  {/* Tick line */}
+                                  <line
+                                    x1={label.x}
+                                    y1="90"
+                                    x2={label.x}
+                                    y2="94"
+                                    stroke="#d1d5db"
+                                    strokeWidth="0.8"
+                                    opacity="0.5"
+                                  />
+                                  {/* Label */}
+                                  <text
+                                    x={label.x}
+                                    y="98"
+                                    fontSize="5"
+                                    fill="#9ca3af"
+                                    fontWeight="400"
+                                    textAnchor="middle"
+                                  >
+                                    {label.minutes}m
+                                  </text>
+                                </g>
+                              ))}
+
+                              {/* Mode division line */}
+                              {hasStructureMode && modeDivisionX !== null && (
+                                <line
+                                  x1={modeDivisionX}
+                                  y1="0"
+                                  x2={modeDivisionX}
+                                  y2="100"
+                                  stroke="#f97316"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="4,4"
+                                  opacity="0.6"
+                                />
+                              )}
+
+                              {/* Gradient area fills - below lines */}
+                              {/* Human area (purple gradient) */}
+                              {pointCount > 0 && (
+                                <path
+                                  d={getHumanAreaPath()}
+                                  fill="url(#humanGradient)"
+                                  className="transition-all duration-700 ease-out"
+                                />
+                              )}
+
+                              {/* AI area (orange gradient) */}
+                              {pointCount > 0 && (
+                                <path
+                                  d={getAIAreaPath()}
+                                  fill="url(#aiGradient)"
+                                  className="transition-all duration-700 ease-out"
+                                />
+                              )}
+
+                              {/* Human line (purple) - smooth curve */}
+                              {pointCount > 0 && (
+                                <path
+                                  d={getHumanLinePath()}
+                                  fill="none"
+                                  stroke="#8b5cf6"
+                                  strokeWidth="1.2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  className="transition-all duration-700 ease-out"
+                                />
+                              )}
+                              {creativityHistory.map((metrics, index) => {
+                                const x = getXPosition(index);
+                                const humanScore = typeof metrics === 'object'
+                                  ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                                  : 0;
+                                const y = 90 - (humanScore * 80);
+                                const isLast = index === creativityHistory.length - 1;
+                                const isHovered = hoveredPointIndex === index;
+                                return (
+                                  <g key={`process-human-${index}`} className="transition-all duration-700 ease-out">
+                                    <circle
+                                      cx={x}
+                                      cy={y}
+                                      r={isHovered ? "4" : "2"}
+                                      fill="#8b5cf6"
+                                      stroke="white"
+                                      strokeWidth="0.8"
+                                      opacity="0.95"
+                                      className={isLast ? "animate-pulse" : ""}
+                                      style={{
+                                        transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
+                                        cursor: 'pointer'
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        const svg = e.currentTarget.ownerSVGElement;
+                                        if (svg) {
+                                          const svgRect = svg.getBoundingClientRect();
+                                          const viewBox = svg.viewBox.baseVal;
+                                          const scaleX = svgRect.width / viewBox.width;
+                                          const scaleY = svgRect.height / viewBox.height;
+                                          // Convert SVG coordinates to pixel coordinates
+                                          const pixelX = (x - viewBox.x) * scaleX;
+                                          const pixelY = (y - viewBox.y) * scaleY;
+                                          setTooltipPosition({
+                                            x: pixelX,
+                                            y: pixelY
+                                          });
+                                        }
+                                        setHoveredPointIndex(index);
+                                      }}
+                                      onMouseLeave={() => {
+                                        setHoveredPointIndex(null);
+                                      }}
+                                    >
+                                      {isLast && (
+                                        <animate
+                                          attributeName="r"
+                                          values="2;3;2"
+                                          dur="0.6s"
+                                          repeatCount="1"
+                                        />
+                                      )}
+                                    </circle>
+                                  </g>
+                                );
+                              })}
+
+                              {/* AI line (orange) - smooth curve */}
+                              {pointCount > 0 && (
+                                <path
+                                  d={getAILinePath()}
+                                  fill="none"
+                                  stroke="#f97316"
+                                  strokeWidth="1.2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  className="transition-all duration-700 ease-out"
+                                />
+                              )}
+                              {creativityHistory.map((metrics, index) => {
+                                const x = getXPosition(index);
+                                const aiScore = typeof metrics === 'object'
+                                  ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                                  : 0;
+                                const y = 90 - (aiScore * 80);
+                                const isLast = index === creativityHistory.length - 1;
+                                const isHovered = hoveredPointIndex === index;
+                                return (
+                                  <g key={`process-ai-${index}`} className="transition-all duration-700 ease-out">
+                                    <circle
+                                      cx={x}
+                                      cy={y}
+                                      r={isHovered ? "4" : "2"}
+                                      fill="#f97316"
+                                      stroke="white"
+                                      strokeWidth="0.8"
+                                      opacity="0.95"
+                                      className={isLast ? "animate-pulse" : ""}
+                                      style={{
+                                        transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
+                                        cursor: 'pointer'
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        const svg = e.currentTarget.ownerSVGElement;
+                                        if (svg) {
+                                          const svgRect = svg.getBoundingClientRect();
+                                          const viewBox = svg.viewBox.baseVal;
+                                          const scaleX = svgRect.width / viewBox.width;
+                                          const scaleY = svgRect.height / viewBox.height;
+                                          // Convert SVG coordinates to pixel coordinates
+                                          const pixelX = (x - viewBox.x) * scaleX;
+                                          const pixelY = (y - viewBox.y) * scaleY;
+                                          setTooltipPosition({
+                                            x: pixelX,
+                                            y: pixelY
+                                          });
+                                        }
+                                        setHoveredPointIndex(index);
+                                      }}
+                                      onMouseLeave={() => {
+                                        setHoveredPointIndex(null);
+                                      }}
+                                    >
+                                      {isLast && (
+                                        <animate
+                                          attributeName="r"
+                                          values="2;3;2"
+                                          dur="0.6s"
+                                          begin="0.1s"
+                                          repeatCount="1"
+                                        />
+                                      )}
+                                    </circle>
+                                  </g>
+                                );
+                              })}
+                            </>
+                          );
+                        })()}
+                      </svg>
                     </div>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h4 className="font-semibold text-gray-800 mb-2">Flexibility</h4>
-                      <p className="text-sm text-gray-600">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h4 className="font-semibold text-gray-800 mb-2">Originality</h4>
-                      <p className="text-sm text-gray-600">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h4 className="font-semibold text-gray-800 mb-2">Elaboration</h4>
-                      <p className="text-sm text-gray-600">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
+
+                    {/* Legend */}
+                    <div className="flex items-center justify-center mt-4">
+                      <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-2">
+                          <div className="w-10 h-1.5 bg-purple-500 rounded"></div>
+                          <span className="text-sm text-gray-700 font-medium">Human</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-10 h-1.5 bg-orange-500 rounded"></div>
+                          <span className="text-sm text-gray-700 font-medium">AI</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3103,230 +4337,370 @@ Note:
             );
           })()}
 
-          {/* Timeline Tab */}
-          {activeTab === 'timeline' && (
-            <>
-              {/* Large Graph */}
-              <div className="bg-gray-50 rounded-lg p-8 mb-6">
-                <div className="relative h-[500px]">
-                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-                    {/* Background grid pattern (same as Creative Flow Timeline) */}
-                    <defs>
-                      <pattern id="timeline-grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
-                      </pattern>
-                    </defs>
-                    <rect width="100" height="100" fill="url(#timeline-grid)" />
+          {/* Outcome Tab */}
+          {activeTab === 'timeline' && (() => {
+            // Calculate TTCT scores based on TTCT + Dependency Framework
+            // Formula: CI' = 0.25F + 0.25X + 0.30O + 0.20E – 0.20D
+            const calculateTTCTScores = (actor) => {
+              // Get nodes created by this actor
+              const actorEvents = eventHistory.filter(e => e.actor === actor && e.event_type === 'Create Node');
+              if (actorEvents.length === 0 && nodes.length === 0) {
+                return {
+                  fluency: 0,
+                  flexibility: 0,
+                  originality: 0,
+                  elaboration: 0
+                };
+              }
 
-                    {/* Creativity line (green) - same calculation as Creative Flow Timeline */}
-                    <polyline
-                      points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                        const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                        const y = 90 - (creativity * 80);
-                        return `${x},${y}`;
-                      }).join(' ')}
-                      fill="none"
-                      stroke="#10b981"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                      const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                      const y = 90 - (creativity * 80);
-                      return (
-                        <g key={`creativity-detail-${index}`}>
+              // Get nodes created by this actor (from event history)
+              const actorNodeIds = new Set(actorEvents.map(e => e.node_id).filter(Boolean));
+              const actorNodes = nodes.filter(n => actorNodeIds.has(n.id.toString()) ||
+                (actor === 'AI' && !n.edited) || (actor === 'HUMAN' && n.edited));
+
+              if (actorNodes.length === 0) {
+                return {
+                  fluency: 0,
+                  flexibility: 0,
+                  originality: 0,
+                  elaboration: 0
+                };
+              }
+
+              // 1. Fluency: number of ideas generated (count, weight 0.25)
+              // Normalize: assume max 50 nodes = 100%
+              const fluency = Math.min((actorNodes.length / 50) * 100, 100);
+
+              // 2. Flexibility: variety of idea categories (unique types, weight 0.25)
+              const uniqueTypes = new Set(actorNodes.map(n => n.type || n.category || 'default'));
+              const uniqueCategories = new Set(actorNodes.map(n => n.category).filter(Boolean));
+              const totalUnique = uniqueTypes.size + uniqueCategories.size;
+              // Normalize: assume max 10 unique types/categories = 100%
+              const flexibility = Math.min((totalUnique / 10) * 100, 100);
+
+              // 3. Originality: novelty of ideas (semantic similarity - lower is better, weight 0.30)
+              // Calculate average semantic similarity between nodes (lower = more original)
+              let totalSimilarity = 0;
+              let similarityCount = 0;
+              for (let i = 0; i < actorNodes.length; i++) {
+                for (let j = i + 1; j < actorNodes.length; j++) {
+                  const text1 = actorNodes[i].text || actorNodes[i].title || '';
+                  const text2 = actorNodes[j].text || actorNodes[j].title || '';
+                  if (text1 && text2) {
+                    const similarity = calculateTextSimilarity(text1, text2);
+                    totalSimilarity += similarity;
+                    similarityCount++;
+                  }
+                }
+              }
+              const avgSimilarity = similarityCount > 0 ? totalSimilarity / similarityCount : 0;
+              // Lower similarity = higher originality (invert: 1 - similarity)
+              const originality = (1 - avgSimilarity) * 100;
+
+              // 4. Elaboration: depth and linkage (density + length, weight 0.20)
+              // Depth: average node level
+              const avgDepth = actorNodes.reduce((sum, n) => sum + (n.level || 0), 0) / actorNodes.length;
+              // Length: average text length
+              const avgLength = actorNodes.reduce((sum, n) => {
+                const text = n.text || n.title || '';
+                return sum + text.length;
+              }, 0) / actorNodes.length;
+              // Linkage: nodes with parent connections
+              const linkedNodes = actorNodes.filter(n => n.parentId || (n.parentIds && n.parentIds.length > 0)).length;
+              const linkageRatio = actorNodes.length > 0 ? linkedNodes / actorNodes.length : 0;
+
+              // Normalize: depth (0-5), length (0-200 chars), linkage (0-1)
+              const depthScore = Math.min((avgDepth / 5) * 100, 100);
+              const lengthScore = Math.min((avgLength / 200) * 100, 100);
+              const linkageScore = linkageRatio * 100;
+              const elaboration = (depthScore * 0.3 + lengthScore * 0.4 + linkageScore * 0.3);
+
+              return {
+                fluency: Math.max(0, Math.min(100, fluency)),
+                flexibility: Math.max(0, Math.min(100, flexibility)),
+                originality: Math.max(0, Math.min(100, originality)),
+                elaboration: Math.max(0, Math.min(100, elaboration))
+              };
+            };
+
+            // Calculate Dependency: AI nodes ÷ total nodes
+            const totalNodes = nodes.length;
+            const aiNodes = nodes.filter(n => {
+              // Check if node was created by AI (not edited by human)
+              const createEvent = eventHistory.find(e => e.event_type === 'Create Node' && e.node_id === n.id.toString());
+              return createEvent?.actor === 'AI' || (!n.edited && totalNodes > 0);
+            }).length;
+            const dependency = totalNodes > 0 ? (aiNodes / totalNodes) * 100 : 0;
+
+            // Calculate TTCT scores for AI and Human
+            const aiScores = calculateTTCTScores('AI');
+            const humanScores = calculateTTCTScores('HUMAN');
+
+            // Calculate final Creativity Index: CI' = 0.25F + 0.25X + 0.30O + 0.20E – 0.20D
+            // For AI and Human separately
+            const aiCI = 0.25 * (aiScores.fluency / 100) +
+              0.25 * (aiScores.flexibility / 100) +
+              0.30 * (aiScores.originality / 100) +
+              0.20 * (aiScores.elaboration / 100) -
+              0.20 * (dependency / 100);
+
+            const humanCI = 0.25 * (humanScores.fluency / 100) +
+              0.25 * (humanScores.flexibility / 100) +
+              0.30 * (humanScores.originality / 100) +
+              0.20 * (humanScores.elaboration / 100) -
+              0.20 * (dependency / 100);
+
+            // Determine strengths
+            const humanStrengths = [];
+            const aiStrengths = [];
+            if (humanScores.flexibility > aiScores.flexibility) humanStrengths.push('Flexibility');
+            if (humanScores.originality > aiScores.originality) humanStrengths.push('Originality');
+            if (aiScores.fluency > humanScores.fluency) aiStrengths.push('Fluency');
+            if (aiScores.elaboration > humanScores.elaboration) aiStrengths.push('Elaboration');
+
+            return (
+              <>
+                {/* TTCT Creativity Dimensions and Side-by-Side Comparison */}
+                <div className="grid grid-cols-2 gap-6 mb-6">
+                  {/* Left: TTCT Creativity Dimensions - Radar Chart */}
+                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">TTCT Creativity Dimensions</h3>
+                    <div className="flex items-center justify-center my-8">
+                      <svg width="400" height="400" viewBox="0 0 400 400" style={{ overflow: 'visible' }}>
+                        {/* Grid circles */}
+                        {[25, 50, 75, 100].map((radius) => (
                           <circle
-                            cx={x}
-                            cy={y}
-                            r="4"
-                            fill="#10b981"
-                            stroke="white"
-                            strokeWidth="2"
-                            opacity="0.9"
+                            key={radius}
+                            cx="200"
+                            cy="200"
+                            r={radius * 1.5}
+                            fill="none"
+                            stroke="#e5e7eb"
+                            strokeWidth="1"
+                            strokeDasharray="2,2"
                           />
-                          <text
-                            x={x}
-                            y={y - 6}
-                            fontSize="4.5"
-                            fill="#10b981"
-                            textAnchor="middle"
-                            fontWeight="bold"
-                          >
-                            {Math.round(creativity * 100)}%
-                          </text>
-                        </g>
-                      );
-                    })}
+                        ))}
 
-                    {/* Dependency line (orange) - same calculation as Creative Flow Timeline */}
-                    <polyline
-                      points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                        const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                        const y = 90 - (dependency * 80);
-                        return `${x},${y}`;
-                      }).join(' ')}
-                      fill="none"
-                      stroke="#f97316"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                      const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                      const y = 90 - (dependency * 80);
-                      return (
-                        <g key={`dependency-detail-${index}`}>
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r="4"
-                            fill="#f97316"
-                            stroke="white"
+                        {/* Axes - 4 axes (90 degrees apart) */}
+                        {[
+                          { label: 'Fluency', angle: -90 },
+                          { label: 'Flexibility', angle: 0 },
+                          { label: 'Originality', angle: 90 },
+                          { label: 'Elaboration', angle: 180 }
+                        ].map((axis) => {
+                          const angle = (axis.angle * Math.PI) / 180;
+                          const centerX = 200;
+                          const centerY = 200;
+                          const axisLength = 150;
+                          const x = centerX + axisLength * Math.cos(angle);
+                          const y = centerY + axisLength * Math.sin(angle);
+
+                          const labelDistance = 30;
+                          const labelX = centerX + (axisLength + labelDistance) * Math.cos(angle);
+                          const labelY = centerY + (axisLength + labelDistance) * Math.sin(angle);
+
+                          return (
+                            <g key={axis.label}>
+                              <line
+                                x1={centerX}
+                                y1={centerY}
+                                x2={x}
+                                y2={y}
+                                stroke="#d1d5db"
+                                strokeWidth="1"
+                              />
+                              <g>
+                                <rect
+                                  x={labelX - (axis.label.length * 3.5)}
+                                  y={labelY - 8}
+                                  width={axis.label.length * 7}
+                                  height={16}
+                                  fill="white"
+                                  fillOpacity="0.9"
+                                  stroke="none"
+                                  rx="2"
+                                />
+                                <text
+                                  x={labelX}
+                                  y={labelY + 4}
+                                  fontSize="11"
+                                  fill="#374151"
+                                  textAnchor="middle"
+                                  fontWeight="600"
+                                  style={{ pointerEvents: 'none' }}
+                                >
+                                  {axis.label}
+                                </text>
+                              </g>
+                            </g>
+                          );
+                        })}
+
+                        {/* AI Polygon (pink) */}
+                        <polygon
+                          points={[
+                            `${200 + (aiScores.fluency / 100) * 150 * Math.cos(-90 * Math.PI / 180)},${200 + (aiScores.fluency / 100) * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                            `${200 + (aiScores.flexibility / 100) * 150 * Math.cos(0 * Math.PI / 180)},${200 + (aiScores.flexibility / 100) * 150 * Math.sin(0 * Math.PI / 180)}`,
+                            `${200 + (aiScores.originality / 100) * 150 * Math.cos(90 * Math.PI / 180)},${200 + (aiScores.originality / 100) * 150 * Math.sin(90 * Math.PI / 180)}`,
+                            `${200 + (aiScores.elaboration / 100) * 150 * Math.cos(180 * Math.PI / 180)},${200 + (aiScores.elaboration / 100) * 150 * Math.sin(180 * Math.PI / 180)}`
+                          ].join(' ')}
+                          fill="#ec4899"
+                          fillOpacity="0.3"
+                          stroke="#ec4899"
+                          strokeWidth="2"
+                        />
+
+                        {/* Human Polygon (purple) */}
+                        {eventHistory.some(e => e.actor === 'HUMAN') && (
+                          <polygon
+                            points={[
+                              `${200 + (humanScores.fluency / 100) * 150 * Math.cos(-90 * Math.PI / 180)},${200 + (humanScores.fluency / 100) * 150 * Math.sin(-90 * Math.PI / 180)}`,
+                              `${200 + (humanScores.flexibility / 100) * 150 * Math.cos(0 * Math.PI / 180)},${200 + (humanScores.flexibility / 100) * 150 * Math.sin(0 * Math.PI / 180)}`,
+                              `${200 + (humanScores.originality / 100) * 150 * Math.cos(90 * Math.PI / 180)},${200 + (humanScores.originality / 100) * 150 * Math.sin(90 * Math.PI / 180)}`,
+                              `${200 + (humanScores.elaboration / 100) * 150 * Math.cos(180 * Math.PI / 180)},${200 + (humanScores.elaboration / 100) * 150 * Math.sin(180 * Math.PI / 180)}`
+                            ].join(' ')}
+                            fill="#8b5cf6"
+                            fillOpacity="0.3"
+                            stroke="#8b5cf6"
                             strokeWidth="2"
-                            opacity="0.9"
                           />
-                          <text
-                            x={x}
-                            y={y + 8}
-                            fontSize="4.5"
-                            fill="#f97316"
-                            textAnchor="middle"
-                            fontWeight="bold"
-                          >
-                            {Math.round(dependency * 100)}%
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-                </div>
-              </div>
-
-              {/* Detailed Metrics */}
-              <div className="grid grid-cols-2 gap-6 mb-6">
-                <div className="bg-green-50 rounded-lg p-6">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4">Creativity Metrics</h3>
-                  {creativityHistory.length > 0 && (() => {
-                    const latest = creativityHistory[creativityHistory.length - 1];
-                    const metrics = typeof latest === 'object' ? latest : { creativity: typeof latest === 'number' ? latest : 0 };
-                    return (
-                      <div className="space-y-3">
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-sm text-gray-600">Fluency</span>
-                            <span className="text-sm font-semibold">{Math.round((metrics.fluency || 0) * 100)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(metrics.fluency || 0) * 100}%` }}></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-sm text-gray-600">Flexibility</span>
-                            <span className="text-sm font-semibold">{Math.round((metrics.flexibility || 0) * 100)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(metrics.flexibility || 0) * 100}%` }}></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-sm text-gray-600">Originality</span>
-                            <span className="text-sm font-semibold">{Math.round((metrics.originality || 0) * 100)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(metrics.originality || 0) * 100}%` }}></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-sm text-gray-600">Elaboration</span>
-                            <span className="text-sm font-semibold">{Math.round((metrics.elaboration || 0) * 100)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(metrics.elaboration || 0) * 100}%` }}></div>
-                          </div>
-                        </div>
+                        )}
+                      </svg>
+                    </div>
+                    <div className="flex items-center justify-center gap-4 mt-6">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-pink-500"></div>
+                        <span className="text-sm text-gray-700">AI</span>
                       </div>
-                    );
-                  })()}
-                </div>
-
-                <div className="bg-orange-50 rounded-lg p-6">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4">Dependency Metrics</h3>
-                  {creativityHistory.length > 0 && (() => {
-                    const latest = creativityHistory[creativityHistory.length - 1];
-                    const dependency = typeof latest === 'object' ? (latest.dependency || 0) : 0;
-                    return (
-                      <div className="space-y-4">
-                        <div>
-                          <div className="flex justify-between mb-2">
-                            <span className="text-sm text-gray-600">AI Dependency</span>
-                            <span className="text-lg font-bold text-orange-600">{Math.round(dependency * 100)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-3">
-                            <div className="bg-orange-500 h-3 rounded-full" style={{ width: `${dependency * 100}%` }}></div>
-                          </div>
+                      {eventHistory.some(e => e.actor === 'HUMAN') && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded bg-purple-500"></div>
+                          <span className="text-sm text-gray-700">Human</span>
                         </div>
-                        <div className="mt-4">
-                          <p className="text-sm text-gray-700 leading-relaxed">
-                            {dependency > 0.7
-                              ? "High dependency on AI. Consider incorporating more human input to improve originality."
-                              : dependency > 0.4
-                                ? "Balanced co-creation. Good mix of AI assistance and human creativity."
-                                : "Low dependency. Strong human-driven creative process."}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
+                      )}
+                    </div>
 
-              {/* History Table */}
-              <div className="bg-white rounded-lg border border-gray-200">
-                <h3 className="text-lg font-bold text-gray-800 p-4 border-b border-gray-200">History</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">API Call</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Creativity</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Dependency</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Fluency</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Flexibility</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Originality</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Elaboration</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {creativityHistory.map((metrics, index) => {
-                        const m = typeof metrics === 'object' ? metrics : { creativity: typeof metrics === 'number' ? metrics : 0, dependency: 0 };
+                    {/* Insight */}
+                    <div className="mt-6 bg-purple-50 rounded-lg p-4">
+                      <p className="text-sm text-gray-700">
+                        {humanStrengths.length > 0 && aiStrengths.length > 0
+                          ? `Your ${humanStrengths.join(' & ')} scores are higher than AI contributions, indicating strong creative independence.`
+                          : humanStrengths.length > 0
+                            ? `Your ${humanStrengths.join(' & ')} scores are higher than AI contributions.`
+                            : 'Your creative process shows a balanced collaboration between human insight and AI assistance.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right: Side-by-Side Comparison - Bar Chart */}
+                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Side-by-Side Comparison</h3>
+                    <div className="space-y-6 mt-8">
+                      {['Fluency', 'Flexibility', 'Originality', 'Elaboration'].map((dimension) => {
+                        const aiScore = aiScores[dimension.toLowerCase() as keyof typeof aiScores];
+                        const humanScore = humanScores[dimension.toLowerCase() as keyof typeof humanScores];
                         return (
-                          <tr key={index} className="hover:bg-gray-50">
-                            <td className="px-4 py-3 text-sm text-gray-700">{index + 1}</td>
-                            <td className="px-4 py-3 text-sm font-semibold text-green-600">{Math.round((m.creativity || 0) * 100)}%</td>
-                            <td className="px-4 py-3 text-sm font-semibold text-orange-600">{Math.round((m.dependency || 0) * 100)}%</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{Math.round((m.fluency || 0) * 100)}%</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{Math.round((m.flexibility || 0) * 100)}%</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{Math.round((m.originality || 0) * 100)}%</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{Math.round((m.elaboration || 0) * 100)}%</td>
-                          </tr>
+                          <div key={dimension}>
+                            <div className="flex justify-between mb-2">
+                              <span className="text-sm font-medium text-gray-700">{dimension}</span>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-gray-600 w-12">AI</span>
+                                <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
+                                  <div
+                                    className="bg-pink-500 h-4 rounded-full"
+                                    style={{ width: `${aiScore}%` }}
+                                  ></div>
+                                  <span className="absolute right-2 top-0 text-xs text-gray-700 leading-4">{Math.round(aiScore)}</span>
+                                </div>
+                              </div>
+                              {eventHistory.some(e => e.actor === 'HUMAN') && (
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs text-gray-600 w-12">Human</span>
+                                  <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
+                                    <div
+                                      className="bg-purple-500 h-4 rounded-full"
+                                      style={{ width: `${humanScore}%` }}
+                                    ></div>
+                                    <span className="absolute right-2 top-0 text-xs text-gray-700 leading-4">{Math.round(humanScore)}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
-                    </tbody>
-                  </table>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-4 mt-6">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-pink-500"></div>
+                        <span className="text-sm text-gray-700">AI</span>
+                      </div>
+                      {eventHistory.some(e => e.actor === 'HUMAN') && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded bg-purple-500"></div>
+                          <span className="text-sm text-gray-700">Human</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Strengths */}
+                    <div className="grid grid-cols-2 gap-4 mt-6">
+                      {humanStrengths.length > 0 && (
+                        <div className="bg-purple-50 rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                            <span className="text-sm font-semibold text-gray-800">Your Strength</span>
+                          </div>
+                          <p className="text-xs text-gray-700">{humanStrengths.join(' & ')}</p>
+                        </div>
+                      )}
+                      {aiStrengths.length > 0 && (
+                        <div className="bg-pink-50 rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-5 h-5 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                            </svg>
+                            <span className="text-sm font-semibold text-gray-800">AI Strength</span>
+                          </div>
+                          <p className="text-xs text-gray-700">{aiStrengths.join(' & ')}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+
+                {/* Understanding TTCT Dimensions */}
+                <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4">Understanding TTCT Dimensions</h3>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2">Fluency</h4>
+                      <p className="text-sm text-gray-600">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2">Flexibility</h4>
+                      <p className="text-sm text-gray-600">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2">Originality</h4>
+                      <p className="text-sm text-gray-600">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2">Elaboration</h4>
+                      <p className="text-sm text-gray-600">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
-      </div>
+      </div >
     );
   }
 
@@ -3336,8 +4710,18 @@ Note:
       <div className="w-full h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50 flex flex-col items-center justify-center p-8">
         {/* Logo and Tagline */}
         <div className="text-center mb-12">
-          <h1 className="text-6xl font-bold text-black mb-2">Nō AI</h1>
-          <p className="text-xl text-black mb-1">LOGO</p>
+          {/* Logo Image */}
+          <div className="mb-6 flex justify-center">
+            <img
+              src="/logo.svg"
+              alt="Logo"
+              className="h-24 w-auto object-contain"
+              onError={(e) => {
+                // If logo doesn't exist, hide the image element
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+          </div>
           <p className="text-lg text-gray-700 mt-4 max-w-2xl">
             Transform your ideas into structured insights with AI-powered exploration.
           </p>
@@ -3526,6 +4910,53 @@ Note:
             const isEditing = editingNode === node.id;
             const isSelected = selectedNode === node.id;
             const isFocused = focusedNode === node.id;
+
+            // Determine node creation type: Human, AI, or Co-creation
+            const getNodeCreationType = (node) => {
+              // Check if node was created by AI (check both string and number ID formats)
+              const aiCreateEvent = eventHistory.find(e =>
+                e.event_type === 'Create Node' &&
+                e.actor === 'AI' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id ||
+                  (e.node_ids_involved && e.node_ids_involved.includes(node.id.toString())) ||
+                  (e.node_ids_involved && e.node_ids_involved.includes(node.id)))
+              );
+
+              // Check if node was created by Human
+              const humanCreateEvent = eventHistory.find(e =>
+                e.event_type === 'Create Node' &&
+                e.actor === 'HUMAN' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id)
+              );
+
+              // Check if node was edited by Human (check both string and number ID formats)
+              const humanEditEvent = eventHistory.find(e =>
+                e.event_type === 'Edit Node' &&
+                e.actor === 'HUMAN' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id)
+              );
+
+              // Co-creation: AI created and Human edited
+              // Priority: Check edited flag first, then event history
+              if (aiCreateEvent && (node.edited || humanEditEvent)) {
+                return 'co-creation';
+              }
+
+              // Human: Human created (or manually created without AI)
+              if (humanCreateEvent || (!aiCreateEvent && node.edited)) {
+                return 'human';
+              }
+
+              // AI: AI created and not edited
+              if (aiCreateEvent && !humanEditEvent && !node.edited) {
+                return 'ai';
+              }
+
+              // Default: assume AI if no clear indication (most nodes are AI-generated)
+              return 'ai';
+            };
+
+            const nodeCreationType = getNodeCreationType(node);
             const isSelectedForStructure = selectedForStructure.has(node.id);
             const isDragging = draggingNode === node.id;
             const isNodeHovered = hoveredNodeId === node.id;
@@ -3622,79 +5053,88 @@ Note:
                           animation: isSelectedForStructure && selectedForStructure.size > 1 ? 'gradientSpread 0.6s ease-out' : undefined
                         }}
                       >
-                        <div
-                          className={`rounded-full w-full h-full flex flex-col items-center justify-center relative transition-all ${isSelectedForStructure && selectedForStructure.size > 1 ? '' : 'border-2'}`}
-                          style={{
-                            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                            background: node.type === 'topic' ? '#f3e8ff' : node.type === 'main' ? '#eff6ff' :
-                              node.type === 'sub' ? '#f0fdf4' :
-                                node.type === 'insight' ? '#fefce8' :
-                                  node.type === 'opportunity' ? '#faf5ff' : '#ffffff',
-                            borderColor: !isSelectedForStructure || selectedForStructure.size === 1
-                              ? (isSelectedForStructure
-                                ? '#9333ea'
-                                : node.type === 'topic' ? '#a855f7' : node.type === 'main' ? '#3b82f6' :
-                                  node.type === 'sub' ? '#10b981' :
-                                    node.type === 'insight' ? '#eab308' :
-                                      node.type === 'opportunity' ? '#a855f7' : 'transparent')
-                              : undefined,
-                            padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px',
-                            boxShadow: isSelectedForStructure && selectedForStructure.size > 1
-                              ? '0 0 15px rgba(236, 72, 153, 0.4), 0 0 25px rgba(245, 158, 11, 0.3)'
-                              : undefined
-                          }}
-                        >
-                          {node.category && (
-                            <span className="absolute -top-2 left-1/2 transform -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-semibold text-gray-600 bg-white shadow-sm border border-gray-200 whitespace-nowrap">
-                              {node.category}
-                            </span>
-                          )}
-                          <div
-                            className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center px-2 py-1"
-                            style={{
-                              maxWidth: '100%',
-                              overflow: isSelected ? 'auto' : 'hidden',
-                              wordBreak: 'break-word'
-                            }}
-                          >
-                            {/* 키워드 - 선택되지 않은 노드에서는 말줄임표, 선택된 노드에서는 전체 */}
-                            <p
-                              className={`break-words text-gray-700 leading-tight font-semibold ${node.type === 'topic' ? 'text-sm' : node.type === 'main' ? 'text-xs' : 'text-xs'}`}
+                        {/* Gradient border wrapper for all node types */}
+                        {(() => {
+                          // Determine gradient colors based on node creation type
+                          let borderGradient = '';
+                          let backgroundGradient = '';
+
+                          if (nodeCreationType === 'co-creation') {
+                            borderGradient = 'linear-gradient(to right, #f0abfc 0%, #fda4af 100%)';
+                            backgroundGradient = 'linear-gradient(to right, #f0abfc 0%, #fda4af 100%)'; // Same gradient as border for co-creation
+                          } else if (nodeCreationType === 'human') {
+                            borderGradient = 'linear-gradient(to right, #c084fc 0%, #a855f7 100%)'; // Light purple to purple gradient
+                            backgroundGradient = 'radial-gradient(circle, #ffffff 0%, #e9d5ff 100%)';
+                          } else if (nodeCreationType === 'ai') {
+                            borderGradient = 'linear-gradient(to right, #fb923c 0%, #f97316 100%)'; // Light orange to orange gradient
+                            backgroundGradient = 'radial-gradient(circle, #ffffff 0%, #fed7aa 100%)';
+                          } else {
+                            // Default node types (topic, main, sub, insight, opportunity)
+                            const defaultColors = {
+                              topic: { border: 'linear-gradient(to right, #d8b4fe 0%, #a855f7 100%)', bg: '#f3e8ff' },
+                              main: { border: 'linear-gradient(to right, #93c5fd 0%, #3b82f6 100%)', bg: '#eff6ff' },
+                              sub: { border: 'linear-gradient(to right, #86efac 0%, #10b981 100%)', bg: '#f0fdf4' },
+                              insight: { border: 'linear-gradient(to right, #fde047 0%, #eab308 100%)', bg: '#fefce8' },
+                              opportunity: { border: 'linear-gradient(to right, #e9d5ff 0%, #a855f7 100%)', bg: '#faf5ff' }
+                            };
+                            const nodeColor = defaultColors[node.type] || { border: 'linear-gradient(to right, #e5e7eb 0%, #9ca3af 100%)', bg: '#ffffff' };
+                            borderGradient = nodeColor.border;
+                            backgroundGradient = nodeColor.bg;
+                          }
+
+                          return (
+                            <div
+                              className="rounded-full w-full h-full relative"
                               style={{
-                                maxWidth: '100%',
-                                overflow: isSelected ? 'visible' : 'hidden',
-                                lineHeight: '1.3',
-                                display: isSelected ? 'block' : '-webkit-box',
-                                WebkitLineClamp: isSelected ? undefined : 1,
-                                WebkitBoxOrient: isSelected ? 'initial' : 'vertical',
-                                wordBreak: 'break-word'
+                                background: borderGradient,
+                                padding: '2px' // Consistent border thickness for all nodes
                               }}
-                              title={!isSelected ? (node.keyword || extractKeyword(node.text)) : undefined}
                             >
-                              {isSelected
-                                ? (node.keyword || extractKeyword(node.text))
-                                : getDisplayText(node.keyword || extractKeyword(node.text), nodeSize, false)
-                              }
-                            </p>
-                            {/* 상세 텍스트 - 선택된 노드에서만 표시, 전체 내용을 여러 줄로 표시 */}
-                            {isSelected && (
                               <div
-                                className="break-words text-gray-600 leading-tight mt-1 text-[10px] w-full"
+                                className="rounded-full w-full h-full flex flex-col items-center justify-center relative transition-all"
                                 style={{
-                                  maxWidth: '100%',
-                                  lineHeight: '1.4',
-                                  wordBreak: 'break-word',
-                                  maxHeight: `${Math.max(40, nodeSize * 0.5)}px`,
-                                  overflowY: 'auto',
-                                  overflowX: 'hidden',
-                                  paddingRight: '2px'
+                                  transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                                  background: backgroundGradient,
+                                  padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px',
+                                  boxShadow: isSelectedForStructure && selectedForStructure.size > 1
+                                    ? '0 0 15px rgba(236, 72, 153, 0.4), 0 0 25px rgba(245, 158, 11, 0.3)'
+                                    : undefined
                                 }}
                               >
-                                {node.text}
+                                {node.category && (
+                                  <span className="absolute -top-2 left-1/2 transform -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-semibold text-gray-600 bg-white shadow-sm border border-gray-200 whitespace-nowrap">
+                                    {node.category}
+                                  </span>
+                                )}
+                                <div
+                                  className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center px-2 py-1"
+                                  style={{
+                                    maxWidth: '100%',
+                                    overflow: isSelected ? 'auto' : 'hidden',
+                                    wordBreak: 'break-word'
+                                  }}
+                                >
+                                  {/* Title - 선택되지 않은 노드는 말줄임표, 선택된 노드는 전체 title 표시 */}
+                                  <p
+                                    className={`break-words text-gray-700 leading-tight font-semibold ${node.type === 'topic' ? 'text-sm' : node.type === 'main' ? 'text-xs' : 'text-xs'}`}
+                                    style={{
+                                      maxWidth: '100%',
+                                      overflow: isSelected ? 'visible' : 'hidden',
+                                      lineHeight: '1.3',
+                                      display: isSelected ? 'block' : '-webkit-box',
+                                      WebkitLineClamp: isSelected ? undefined : 2,
+                                      WebkitBoxOrient: isSelected ? 'initial' : 'vertical',
+                                      wordBreak: 'break-word'
+                                    }}
+                                    title={!isSelected ? (node.title || node.text) : undefined}
+                                  >
+                                    {node.title || node.text}
+                                  </p>
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </>
                   )}
@@ -3817,7 +5257,7 @@ Note:
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
-                        // TODO: 새 노드 추가 기능 구현
+                        handleAddNodeClick(node);
                       }}
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -3852,9 +5292,125 @@ Note:
             </div>
           )}
 
+          {/* Add Node Modal */}
+          {addNodeModal && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center" onClick={handleAddNodeCancel}>
+              <div className="bg-white rounded-xl shadow-2xl p-6 min-w-[400px] max-w-[500px]" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Add New Node</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Enter the text for the new node that will be connected to "{nodes.find(n => n.id === addNodeModal)?.text || ''}"
+                </p>
+                <textarea
+                  value={addNodeText}
+                  onChange={(e) => setAddNodeText(e.target.value)}
+                  placeholder="Enter node text..."
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                  rows={4}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      handleAddNodeSubmit();
+                    } else if (e.key === 'Escape') {
+                      handleAddNodeCancel();
+                    }
+                  }}
+                />
+                <div className="flex gap-3 mt-6 justify-end">
+                  <button
+                    onClick={handleAddNodeCancel}
+                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAddNodeSubmit}
+                    disabled={!addNodeText.trim()}
+                    className="px-4 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Add Node
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+
+          {/* Node Detail Card - shown when a node is selected in exploration mode */}
+          {mode === 'exploration' && selectedNode && (() => {
+            const selectedNodeData = nodes.find(n => n.id === selectedNode);
+            if (!selectedNodeData) return null;
+
+            // Determine node type label
+            const getNodeTypeLabel = (node) => {
+              if (node.category) return node.category;
+              if (node.type === 'topic') return 'Topic';
+              if (node.type === 'main') return 'Main Node';
+              if (node.type === 'sub') return 'Sub Node';
+              if (node.type === 'insight') return 'Insight';
+              if (node.type === 'opportunity') return 'Opportunity';
+              return 'Node';
+            };
+
+            return (
+              <div className={`fixed bottom-6 w-[480px] z-[100] shadow-2xl bg-white rounded-lg border border-gray-200 ${isReflectionSidebarOpen ? 'left-[calc(50%-200px)]' : 'left-1/2'} transform -translate-x-1/2`} style={{ pointerEvents: 'auto' }}>
+                {/* Header with title and buttons */}
+                <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-gray-800">{getNodeTypeLabel(selectedNodeData)}</h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleEdit(selectedNodeData)}
+                      className="p-2 hover:bg-blue-50 rounded transition-colors"
+                      title="Edit"
+                    >
+                      <Edit2 size={18} className="text-blue-600" />
+                    </button>
+                    <button
+                      onClick={() => setSelectedNode(null)}
+                      className="p-2 hover:bg-gray-50 rounded transition-colors"
+                      title="Close"
+                    >
+                      <X size={18} className="text-gray-600" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Node description */}
+                <div className="p-4 border-b border-gray-200">
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                    {selectedNodeData.description || selectedNodeData.text || ''}
+                  </p>
+                </div>
+
+                {/* Action buttons */}
+                <div className="p-4 flex gap-3">
+                  <button
+                    onClick={() => {
+                      handleAddNodeClick(selectedNodeData);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                  >
+                    <Plus size={18} />
+                    Add (Human)
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleGenerate(selectedNodeData);
+                    }}
+                    disabled={loading}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+                  >
+                    <Sparkles size={18} />
+                    Add (AI)
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {mode === 'exploration' && nodes.length > 0 && (
-            <div className={`fixed bottom-6 w-[480px] z-[100] shadow-2xl bg-white rounded-lg ${isReflectionSidebarOpen ? 'right-[400px]' : 'right-6'}`} style={{ pointerEvents: 'auto' }}>
+            <div className={`fixed bottom-6 w-[360px] z-[90] shadow-2xl bg-white rounded-lg ${isReflectionSidebarOpen ? 'right-[400px]' : 'right-6'}`} style={{ pointerEvents: 'auto' }}>
               <div className="bg-white rounded-lg shadow-lg p-4 border border-gray-200">
                 <div className="mb-3">
                   <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
@@ -3862,79 +5418,131 @@ Note:
                 </div>
                 <div className="border-t border-dotted border-blue-300 mb-3"></div>
 
-                <div className="relative h-32 bg-gray-50 rounded-lg p-4 mb-3">
-                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+                <div className="relative h-32 bg-gray-50 rounded-lg mb-3 overflow-hidden">
+                  <svg className="w-full h-full" viewBox="0 0 200 100" preserveAspectRatio="xMidYMid meet">
                     {/* Background grid lines for better visualization */}
                     <defs>
                       <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
                         <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
                       </pattern>
                     </defs>
-                    <rect width="100" height="100" fill="url(#grid)" />
+                    <rect x="0" y="0" width="200" height="100" fill="url(#grid)" />
 
-                    {/* Creativity line (green) */}
-                    <polyline
-                      points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                        const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                        const y = 90 - (creativity * 80);
-                        return `${x},${y}`;
-                      }).join(' ')}
-                      fill="none"
-                      stroke="#10b981"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                      const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
-                      const y = 90 - (creativity * 80);
-                      return (
-                        <circle
-                          key={`creativity-${index}`}
-                          cx={x}
-                          cy={y}
-                          r="3.5"
-                          fill="#10b981"
-                          stroke="white"
-                          strokeWidth="2"
-                          opacity="0.9"
-                        />
-                      );
-                    })}
+                    {/* Calculate X positions to fill the box */}
+                    {(() => {
+                      const pointCount = creativityHistory.length;
+                      const getXPosition = (index) => {
+                        if (pointCount === 0) return 100;
+                        if (pointCount === 1) return 100; // Center for single point
+                        // For 2+ points, use full width of the rect (0 to 200)
+                        // The rect is width="200" height="100", so 0 and 200 are the left and right edges
+                        // This wider viewBox (200x100) better matches the container's aspect ratio
+                        const minX = 0;
+                        const maxX = 200;
+                        return minX + (index / (pointCount - 1)) * (maxX - minX);
+                      };
 
-                    {/* Dependency line (orange) */}
-                    <polyline
-                      points={creativityHistory.map((metrics, index) => {
-                        const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                        const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                        const y = 90 - (dependency * 80);
-                        return `${x},${y}`;
-                      }).join(' ')}
-                      fill="none"
-                      stroke="#f97316"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    {creativityHistory.map((metrics, index) => {
-                      const x = (index / Math.max(creativityHistory.length - 1, 1)) * 92 + 4;
-                      const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
-                      const y = 90 - (dependency * 80);
                       return (
-                        <circle
-                          key={`dependency-${index}`}
-                          cx={x}
-                          cy={y}
-                          r="3.5"
-                          fill="#f97316"
-                          stroke="white"
-                          strokeWidth="2"
-                          opacity="0.9"
-                        />
+                        <>
+                          {/* Creativity line (green) */}
+                          <polyline
+                            points={creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
+                              const y = 90 - (creativity * 80);
+                              return `${x},${y}`;
+                            }).join(' ')}
+                            fill="none"
+                            stroke="#10b981"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="transition-all duration-700 ease-out"
+                          />
+                          {creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const creativity = typeof metrics === 'object' ? metrics.creativity : (typeof metrics === 'number' ? metrics : 0);
+                            const y = 90 - (creativity * 80);
+                            const isLast = index === creativityHistory.length - 1;
+                            return (
+                              <g key={`creativity-${index}`} className="transition-all duration-700 ease-out">
+                                <circle
+                                  cx={x}
+                                  cy={y}
+                                  r={isLast ? "3.5" : "3.5"}
+                                  fill="#10b981"
+                                  stroke="white"
+                                  strokeWidth="2"
+                                  opacity="0.9"
+                                  className={isLast ? "animate-pulse" : ""}
+                                  style={{
+                                    transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)'
+                                  }}
+                                >
+                                  {isLast && (
+                                    <animate
+                                      attributeName="r"
+                                      values="3.5;5;3.5"
+                                      dur="0.6s"
+                                      repeatCount="1"
+                                    />
+                                  )}
+                                </circle>
+                              </g>
+                            );
+                          })}
+
+                          {/* Dependency line (orange) */}
+                          <polyline
+                            points={creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
+                              const y = 90 - (dependency * 80);
+                              return `${x},${y}`;
+                            }).join(' ')}
+                            fill="none"
+                            stroke="#f97316"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="transition-all duration-700 ease-out"
+                          />
+                          {creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const dependency = typeof metrics === 'object' ? metrics.dependency : 0;
+                            const y = 90 - (dependency * 80);
+                            const isLast = index === creativityHistory.length - 1;
+                            return (
+                              <g key={`dependency-${index}`} className="transition-all duration-700 ease-out">
+                                <circle
+                                  cx={x}
+                                  cy={y}
+                                  r="3.5"
+                                  fill="#f97316"
+                                  stroke="white"
+                                  strokeWidth="2"
+                                  opacity="0.9"
+                                  className={isLast ? "animate-pulse" : ""}
+                                  style={{
+                                    transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)'
+                                  }}
+                                >
+                                  {isLast && (
+                                    <animate
+                                      attributeName="r"
+                                      values="3.5;5;3.5"
+                                      dur="0.6s"
+                                      begin="0.1s"
+                                      repeatCount="1"
+                                    />
+                                  )}
+                                </circle>
+                              </g>
+                            );
+                          })}
+                        </>
                       );
-                    })}
+                    })()}
                   </svg>
                 </div>
 
