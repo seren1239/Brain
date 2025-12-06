@@ -26,7 +26,34 @@ semantic_delete_score,number,"0–3 range, see rubric for details."
 semantic_selection_score,number,"0–3 range, see rubric for details."
 semantic_move_score_small,number,"0–3 range, see rubric for details."
 semantic_move_score_big,number,"0–3 range, see rubric for details."
-human_score_total,number,Total semantic score for HUMAN actions.
-ai_score_total,number,Total semantic score for AI actions.
+role_weight   ,number,"Weight based on actor + action type. role_weight is assigned automatically based on actor and action type:
+
+For HUMAN:
+- Reframing (cross-boundary move, direction-shifting edit): 3.0–4.0
+- Evaluation (delete, selection, critique): 2.5–3.5
+- Constraint setting: 2.0–3.0
+- Domain knowledge contribution: 1.5–2.0
+- Micro editing: 1.5–2.0
+
+For AI:
+- Generative Expansion: 1.0
+- Conceptual Blending: 1.0
+- Domain knowledge generation: 1.0
+"
+impact_factor,number,"Multiplier representing directional impact.impact_factor reflects the directional impact of an event:
+
+2.0 = Cross-quadrant move, reframing, deleting >3 nodes, selecting multiple nodes 
+      (major restructuring of semantic space)
+
+1.5 = Medium-impact selection, pruning, adding strong constraints
+
+1.0 = Standard generative or editing behavior, mild structure shift
+
+0.5 = Micro editing that does not significantly alter meaning or structure
+"
+final_score,number,semantic_total_score × role_weight × impact_factor
+,,
+human_score_total,number,Total final_score for HUMAN actions.
+ai_score_total,number,Total final_score for AI actions.
 curve_human_ratio,number,HUMAN score / (HUMAN score + AI score); value from 0–1.
 curve_ai_ratio,number,AI score / (HUMAN score + AI score); value from 0–1.

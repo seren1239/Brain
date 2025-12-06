@@ -147,14 +147,11 @@ export default function IdeaTreeGenerator() {
   const [mode, setMode] = useState('exploration');
   const [inputValue, setInputValue] = useState('');
   const [landingInputValue, setLandingInputValue] = useState(''); // Landing page input
-  const [isInputFocused, setIsInputFocused] = useState(false); // Track input focus state
   const [nodes, setNodes] = useState([]);
   const [reflections, setReflections] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
   const [editValue, setEditValue] = useState('');
-  const [editingDescriptionNodeId, setEditingDescriptionNodeId] = useState(null);
-  const [editDescriptionValue, setEditDescriptionValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [focusedNode, setFocusedNode] = useState(null);
   const [creativityHistory, setCreativityHistory] = useState([]);
@@ -356,8 +353,6 @@ export default function IdeaTreeGenerator() {
 
     switch (eventType) {
       case 'Initial Input':
-        // Initial Input is a significant human contribution - starts at Human 100%, Generative Expansion 100%
-        scores.semantic_generative_score = 3; // Maximum generative expansion (human input starts the creative process)
         // semantic_input_score: 0 = minimal; 1 = basic task; 2 = problem with context; 3 = complete brief
         const inputLength = (eventData.raw_content || '').length;
         if (inputLength < 20) scores.semantic_input_score = 0;
@@ -712,17 +707,6 @@ export default function IdeaTreeGenerator() {
         raw_content: topicText,
         node_id: topicNodeId.toString()
       });
-
-      // Initialize Creative Flow Timeline with Human 100%, Dependency 0%
-      // This represents the initial human input starting the creative process
-      setCreativityHistory([{
-        creativity: 1.0,
-        dependency: 0.0,
-        human_score_total: 0,
-        ai_score_total: 0,
-        curve_human_ratio: 1.0,
-        curve_ai_ratio: 0.0
-      }]);
 
       // Then generate Step 1 nodes (Context, User, Task, Goal) as children of TOPIC
       await generateStep1ProblemFraming(topicText, topicNodeId);
@@ -1833,51 +1817,6 @@ JSON-ONLY OUTPUT FORMAT
     setEditValue('');
   };
 
-  const handleEditDescription = (node) => {
-    setEditingDescriptionNodeId(node.id);
-    setEditDescriptionValue(node.description || node.text || '');
-  };
-
-  const handleSaveDescription = () => {
-    const nodeToEdit = nodes.find(n => n.id === editingDescriptionNodeId);
-    if (!nodeToEdit) return;
-
-    setNodes(prev => prev.map(n =>
-      n.id === editingDescriptionNodeId ? { ...n, description: editDescriptionValue, edited: true } : n
-    ));
-
-    // Track Edit Node event (description edit is still an edit)
-    trackEvent('Edit Node', 'HUMAN', {
-      node_id: editingDescriptionNodeId.toString(),
-      raw_content: nodeToEdit.description || nodeToEdit.text,
-      new_content: editDescriptionValue
-    });
-
-    const newEditCount = editCount + 1;
-    setEditCount(newEditCount);
-
-    const newMetrics = calculateCreativityIndex();
-    setCreativityHistory(prev => {
-      const updated = [...prev];
-      const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
-      if (structureModeStartIndex !== null && prev.length >= structureModeStartIndex) {
-        return [...prev, newMetrics];
-      } else if (updated.length > 0) {
-        updated[updated.length - 1] = newMetrics;
-        return updated;
-      }
-      return [newMetrics];
-    });
-
-    setEditingDescriptionNodeId(null);
-    setEditDescriptionValue('');
-  };
-
-  const handleCancelDescriptionEdit = () => {
-    setEditingDescriptionNodeId(null);
-    setEditDescriptionValue('');
-  };
-
   // Multi-selection Generate: AI decides what to generate based on selected nodes
   const generateMultiSelection = async (selectedNodesList) => {
     if (selectedNodesList.length === 0) return;
@@ -2931,7 +2870,7 @@ Note:
   // For now, we'll keep the code below but add a check here that will be ignored
   // TODO: Move the entire report page block (lines 3574-5878) to this location (before line 2875)
 
-  if (mode === 'structure' && currentPage !== 'report') {
+  if (mode === 'structure') {
     // Use stored node IDs from structure analysis, not current selection
     const selectedNodes = nodes.filter(n => structureSelectedNodeIds.has(n.id));
 
@@ -3113,54 +3052,33 @@ Note:
     };
 
     return (
-      <div className="w-full h-screen flex flex-col" style={{ background: 'linear-gradient(to bottom right, #FAF5FF, #FDF2F8, #FFF7ED)' }}>
-        <div className="flex-1 flex overflow-hidden relative">
-          {/* Top Menu Bar - Structure Mode, Canvas Centered */}
-          <div className="absolute top-6 left-[calc(50%-192px)] transform -translate-x-1/2 z-50">
-            <div className="bg-white rounded-lg shadow-lg border border-purple-200 px-2 py-2 flex items-center gap-1">
-              {/* Home Button */}
-              <button
-                onClick={handleHome}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
-                title="Return to home"
-              >
-                <Home size={18} />
-                <span>Home</span>
-              </button>
-
-              {/* Divider */}
-              <div className="w-px h-8 bg-gray-300"></div>
-
-              {/* Exploration Mode Button */}
-              <button
-                onClick={() => setMode('exploration')}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
-                title="Back to Exploration Mode"
-              >
-                <ArrowLeft size={18} />
-                <span>Exploration Mode</span>
-              </button>
-
-              {/* Divider */}
-              <div className="w-px h-8 bg-gray-300"></div>
-
-              {/* Creativity Report Button */}
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setCurrentPage('report');
-                  setActiveTab('timeline');
-                }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
-                title="View Creativity Report"
-              >
-                <Star size={18} />
-                <span>Creativity Report</span>
-              </button>
-            </div>
+      <div className="w-full h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex flex-col">
+        <div className="bg-white shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-3xl font-bold text-gray-800">🏗️ Structure Mode</h1>
+            <button
+              onClick={() => setMode('exploration')}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              <ArrowLeft size={20} />
+              Back to Exploration
+            </button>
           </div>
+          <div className="flex items-center gap-4">
+            <p className="text-gray-600">Impact-Feasibility Matrix</p>
+            {hierarchyAnalysis && (
+              <div className="flex gap-2">
+                {hierarchyAnalysis.mainThemes.slice(0, 3).map((theme, idx) => (
+                  <span key={idx} className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold">
+                    {theme}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
+        <div className="flex-1 flex overflow-hidden">
           <div
             className="flex-1 overflow-auto relative"
             onMouseMove={handleMouseMove}
@@ -3631,7 +3549,7 @@ Note:
                         onClick={(e) => {
                           e.stopPropagation();
                           setCurrentPage('report');
-                          setActiveTab('overview');
+                          setActiveTab('timeline');
                         }}
                         className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
                         title="View Details"
@@ -4967,12 +4885,7 @@ Note:
   // Landing Page
   if (showLandingPage) {
     return (
-      <div
-        className="w-full h-screen flex flex-col items-center justify-center p-8"
-        style={{
-          background: 'linear-gradient(to bottom right, #FAF5FF, #FDF2F8, #FFF7ED)'
-        }}
-      >
+      <div className="w-full h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50 flex flex-col items-center justify-center p-8">
         {/* Logo and Tagline */}
         <div className="text-center mb-12">
           {/* Logo Image */}
@@ -5009,37 +4922,15 @@ Note:
               }
             }}
             placeholder="Enter your creative concept, problem to solve, or topic to explore..."
-            className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:outline-none resize-none mb-4 min-h-[120px] text-base transition-all"
-            style={{
-              borderColor: isInputFocused ? '#AD46FF' : '#d1d5db',
-              boxShadow: isInputFocused ? '0 0 0 2px rgba(173, 70, 255, 0.2), 0 0 8px rgba(173, 70, 255, 0.3)' : 'none'
-            }}
+            className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 resize-none mb-4 min-h-[120px] text-base"
             disabled={loading}
-            onFocus={() => setIsInputFocused(true)}
-            onBlur={() => setIsInputFocused(false)}
           />
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-500">Press Enter to start</p>
             <button
               onClick={handleStartExploration}
               disabled={loading || !landingInputValue.trim()}
-              className="flex items-center gap-2 px-8 py-3 text-white rounded-lg disabled:cursor-not-allowed font-semibold text-lg transition-all shadow-lg"
-              style={{
-                background: (loading || !landingInputValue.trim())
-                  ? 'linear-gradient(to right, #d1d5db, #d1d5db)'
-                  : 'linear-gradient(to right, #AD46FF, #F6339A, #FF6900)',
-                opacity: (loading || !landingInputValue.trim()) ? 0.5 : 1
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && landingInputValue.trim()) {
-                  e.currentTarget.style.background = 'linear-gradient(to right, #9d36e6, #e62a8a, #ff5a00)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading && landingInputValue.trim()) {
-                  e.currentTarget.style.background = 'linear-gradient(to right, #AD46FF, #F6339A, #FF6900)';
-                }
-              }}
+              className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-all shadow-lg"
             >
               {loading ? 'Starting...' : 'Start Exploration'}
               <ArrowRight size={20} />
@@ -5070,12 +4961,7 @@ Note:
   }
 
   return (
-    <div
-      className="w-full h-screen flex flex-col"
-      style={{
-        background: 'linear-gradient(to bottom right, #FAF5FF, #FDF2F8, #FFF7ED)'
-      }}
-    >
+    <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex flex-col">
       <div className="flex-1 flex overflow-hidden relative">
         {/* Top Menu Bar - Only in Exploration Mode, Canvas Centered */}
         {mode === 'exploration' && nodes.length > 0 && (
@@ -5094,7 +4980,34 @@ Note:
               {/* Divider */}
               <div className="w-px h-8 bg-gray-300"></div>
 
-              {/* Structure Mode Button - Unified: Navigate to existing or generate new */}
+              {/* Structure Mode Button - Go to existing structure if available */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // Only allow navigation if hierarchyAnalysis exists
+                  if (!hierarchyAnalysis) {
+                    return; // Do nothing if no structure exists
+                  }
+                  // If hierarchyAnalysis exists, just switch to structure mode
+                  // Position recalculation will be handled by useEffect
+                  setMode('structure');
+                }}
+                disabled={!hierarchyAnalysis}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${hierarchyAnalysis
+                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md hover:scale-105 active:scale-95 cursor-pointer'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
+                  }`}
+                title={hierarchyAnalysis ? 'Go to Structure Mode' : 'No structure available. Generate structure first using "Generate Structure" button.'}
+              >
+                <LayoutGrid size={18} />
+                <span>Structure Mode</span>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-8 bg-gray-300"></div>
+
+              {/* Generate Structure Button */}
               <button
                 onClick={(e) => {
                   e.preventDefault();
@@ -5104,35 +5017,16 @@ Note:
                   setTimeout(() => {
                     e.currentTarget.style.transform = '';
                   }, 150);
-
-                  // If structure exists and no nodes selected, just navigate
-                  if (hierarchyAnalysis && selectedForStructure.size < 2) {
-                    setMode('structure');
-                  }
-                  // If nodes are selected (2+), generate new structure (even if one exists)
-                  else if (selectedForStructure.size >= 2) {
-                    analyzeHierarchy();
-                  }
+                  analyzeHierarchy();
                 }}
-                disabled={
-                  analyzingStructure ||
-                  (!hierarchyAnalysis && selectedForStructure.size < 2)
-                }
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${analyzingStructure
-                  ? 'bg-purple-200 text-purple-800 shadow-lg cursor-wait'
-                  : (hierarchyAnalysis || selectedForStructure.size >= 2)
-                    ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md hover:scale-105 active:scale-95 cursor-pointer'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
+                disabled={analyzingStructure || selectedForStructure.size < 2}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-gray-700 font-medium ${selectedForStructure.size >= 2 && !analyzingStructure
+                  ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 shadow-md animate-pulse hover:scale-105 active:scale-95'
+                  : analyzingStructure
+                    ? 'bg-purple-200 text-purple-800 shadow-lg cursor-wait'
+                    : 'hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed'
                   }`}
-                title={
-                  analyzingStructure
-                    ? 'Analyzing structure...'
-                    : hierarchyAnalysis && selectedForStructure.size < 2
-                      ? 'Go to Structure Mode'
-                      : selectedForStructure.size >= 2
-                        ? `Generate Structure (${selectedForStructure.size} selected)`
-                        : 'Select at least 2 nodes to generate structure'
-                }
+                title={analyzingStructure ? 'Analyzing structure...' : selectedForStructure.size >= 2 ? `Generate Structure (${selectedForStructure.size} selected)` : 'Select at least 2 nodes to generate structure'}
               >
                 {analyzingStructure ? (
                   <>
@@ -5142,7 +5036,7 @@ Note:
                 ) : (
                   <>
                     <LayoutGrid size={18} />
-                    <span>Structure Mode</span>
+                    <span>Generate Structure</span>
                     {selectedForStructure.size >= 2 && (
                       <span className="ml-1 px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full">
                         {selectedForStructure.size}
@@ -5175,8 +5069,7 @@ Note:
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           style={{
-            cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : 'default',
-            background: 'linear-gradient(to bottom right, #FAF5FF, #FDF2F8, #FFF7ED)'
+            cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : 'default'
           }}
         >
           <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
@@ -5345,14 +5238,14 @@ Note:
                           let backgroundGradient = '';
 
                           if (nodeCreationType === 'co-creation') {
-                            borderGradient = 'linear-gradient(to right, #AD46FF 0%, #F6339A 50%, #FF6900 100%)'; // Vibrant neon gradient border (100% opacity)
-                            backgroundGradient = 'linear-gradient(to right, rgba(173, 70, 255, 0.08) 0%, rgba(246, 51, 154, 0.08) 50%, rgba(255, 105, 0, 0.08) 100%)'; // Same gradient with 8% opacity (lighter)
+                            borderGradient = 'linear-gradient(to right, #f0abfc 0%, #fda4af 100%)';
+                            backgroundGradient = 'linear-gradient(to right, #f0abfc 0%, #fda4af 100%)'; // Same gradient as border for co-creation
                           } else if (nodeCreationType === 'human') {
-                            borderGradient = '#9810FA'; // Solid purple border
-                            backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #EED8FF 100%)'; // White to soft lavender gradient
+                            borderGradient = 'linear-gradient(to right, #c084fc 0%, #a855f7 100%)'; // Light purple to purple gradient
+                            backgroundGradient = 'radial-gradient(circle, #ffffff 0%, #e9d5ff 100%)';
                           } else if (nodeCreationType === 'ai') {
-                            borderGradient = '#FE6215'; // Solid orange border
-                            backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #FFD8BD 100%)'; // White to soft peach-beige gradient
+                            borderGradient = 'linear-gradient(to right, #fb923c 0%, #f97316 100%)'; // Light orange to orange gradient
+                            backgroundGradient = 'radial-gradient(circle, #ffffff 0%, #fed7aa 100%)';
                           } else {
                             // Default node types (topic, main, sub, insight, opportunity)
                             const defaultColors = {
@@ -5383,13 +5276,7 @@ Note:
                                   padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px',
                                   boxShadow: isSelectedForStructure && selectedForStructure.size > 1
                                     ? '0 0 15px rgba(236, 72, 153, 0.4), 0 0 25px rgba(245, 158, 11, 0.3)'
-                                    : (isSelected && nodeCreationType === 'human')
-                                      ? '0 4px 12px rgba(152, 16, 250, 0.3), 0 2px 6px rgba(152, 16, 250, 0.2)'
-                                      : (isSelected && nodeCreationType === 'ai')
-                                        ? '0 4px 12px rgba(254, 98, 21, 0.3), 0 2px 6px rgba(254, 98, 21, 0.2)'
-                                        : (isSelected && nodeCreationType === 'co-creation')
-                                          ? '0 4px 12px rgba(173, 70, 255, 0.3), 0 2px 6px rgba(246, 51, 154, 0.2)'
-                                          : undefined
+                                    : undefined
                                 }}
                               >
                                 {node.category && (
@@ -5651,9 +5538,9 @@ Note:
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleEditDescription(selectedNodeData)}
+                      onClick={() => handleEdit(selectedNodeData)}
                       className="p-2 hover:bg-blue-50 rounded transition-colors"
-                      title="Edit Description"
+                      title="Edit"
                     >
                       <Edit2 size={18} className="text-blue-600" />
                     </button>
@@ -5669,35 +5556,9 @@ Note:
 
                 {/* Node description */}
                 <div className="p-4 border-b border-gray-200">
-                  {editingDescriptionNodeId === selectedNodeData.id ? (
-                    <div>
-                      <textarea
-                        value={editDescriptionValue}
-                        onChange={(e) => setEditDescriptionValue(e.target.value)}
-                        className="w-full p-3 border border-gray-300 rounded-lg text-gray-700 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        rows={6}
-                        autoFocus
-                      />
-                      <div className="flex gap-2 mt-3">
-                        <button
-                          onClick={handleSaveDescription}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={handleCancelDescriptionEdit}
-                          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                      {selectedNodeData.description || selectedNodeData.text || ''}
-                    </p>
-                  )}
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                    {selectedNodeData.description || selectedNodeData.text || ''}
+                  </p>
                 </div>
 
                 {/* Action buttons */}
@@ -5884,7 +5745,7 @@ Note:
                       onClick={(e) => {
                         e.stopPropagation();
                         setCurrentPage('report');
-                        setActiveTab('overview');
+                        setActiveTab('timeline');
                       }}
                       className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
                       title="View Details"
@@ -5903,13 +5764,14 @@ Note:
         {!isReflectionSidebarOpen && reflections.length > 0 && (
           <button
             onClick={() => setIsReflectionSidebarOpen(true)}
-            className="fixed top-4 right-4 z-50 w-14 h-14 bg-white rounded-lg shadow-md flex items-center justify-center hover:shadow-lg transition-all hover:scale-105"
+            className="fixed top-4 right-4 z-50 w-12 h-12 bg-white rounded-lg shadow-lg border-2 border-yellow-300 flex items-center justify-center hover:bg-yellow-50 transition-all hover:scale-105 relative"
             title="Open Reflections"
-            style={{
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-            }}
           >
-            <Lightbulb className="text-[#AD46FF]" size={28} strokeWidth={2.5} style={{ stroke: '#AD46FF', fill: '#AD46FF' }} />
+            <Lightbulb className="text-yellow-600" size={24} />
+            {/* Alert badge */}
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center border-2 border-white">
+              <AlertCircle size={12} className="text-white" />
+            </div>
           </button>
         )}
 

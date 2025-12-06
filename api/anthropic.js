@@ -33,10 +33,15 @@ export default async function handler(req, res) {
         if (!apiKey) {
             console.error('ANTHROPIC_API_KEY is not set!');
             console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('ANTHROPIC')));
+            console.error('All env vars (first 20):', Object.keys(process.env).slice(0, 20));
             return res.status(500).json({
                 error: 'ANTHROPIC_API_KEY is not set in server environment',
-                hint: 'Please set ANTHROPIC_API_KEY in Vercel environment variables',
-                availableEnvVars: Object.keys(process.env).filter(k => k.includes('ANTHROPIC'))
+                hint: 'Please set ANTHROPIC_API_KEY in Vercel environment variables and redeploy',
+                debug: {
+                    availableEnvVars: Object.keys(process.env).filter(k => k.includes('ANTHROPIC')),
+                    nodeEnv: process.env.NODE_ENV,
+                    vercelEnv: process.env.VERCEL_ENV
+                }
             });
         }
 

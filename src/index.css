@@ -101,3 +101,28 @@ body {
         stroke-dashoffset: 0;
     }
 }
+
+/* Gradient border effect for textarea */
+.gradient-border-wrapper {
+    position: relative;
+}
+
+.gradient-border-wrapper::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 0.5rem;
+    padding: 2px;
+    background: linear-gradient(to right, #AD46FF, #F6339A, #FF6900);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.gradient-border-wrapper:has(textarea:focus)::before {
+    opacity: 1;
+}
