@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus, BarChart } from 'lucide-react';
 
 // API URL: Use environment variable or fallback to localhost for development
 // In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
@@ -1776,9 +1776,9 @@ JSON-ONLY OUTPUT FORMAT
         setTimeout(() => {
           const graphContainer = document.getElementById('structure-graph-container');
           if (graphContainer) {
-            const graphWidth = 800;
-            const graphHeight = 600;
-            const margin = 100;
+            const graphWidth = 1000;
+            const graphHeight = 750;
+            const margin = 125;
             const initialPositions = {};
 
             parsed.analysis.forEach(analysis => {
@@ -2644,9 +2644,9 @@ Note:
       if (!graphContainer) return;
 
       const graphRect = graphContainer.getBoundingClientRect();
-      const graphWidth = 800;
-      const graphHeight = 600;
-      const margin = 100;
+      const graphWidth = 1000;
+      const graphHeight = 750;
+      const margin = 125;
       const nodeRadius = 8;
 
       // Calculate new node center position in screen coordinates
@@ -3109,10 +3109,10 @@ Note:
       if (!analysis) return { x: 0, y: 0 };
 
       // Position based on Impact (Y-axis) and Feasibility (X-axis)
-      const graphWidth = 800;
-      const graphHeight = 600;
+      const graphWidth = 1000;
+      const graphHeight = 750;
       const nodeRadius = 8;
-      const margin = 100; // Match the margin used in grid rendering
+      const margin = 125; // Match the margin used in grid rendering
 
       // Clamp values to 1-10 range
       const clampedFeasibility = Math.max(1, Math.min(10, analysis.feasibility || 5));
@@ -3272,7 +3272,7 @@ Note:
                 className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
                 title="View Creativity Report"
               >
-                <Star size={18} />
+                <BarChart size={18} />
                 <span>Creativity Report</span>
               </button>
             </div>
@@ -3287,7 +3287,61 @@ Note:
             {analyzingStructure || !hierarchyAnalysis ? (
               <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
                 <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
-                  <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
+                  {/* Mini Structure Preview - Icon-like */}
+                  <div className="relative" style={{ width: '200px', height: '150px' }}>
+                    {/* Animated Quadrants */}
+                    <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r border-b border-gray-300 rounded-tl-lg" style={{
+                      zIndex: 0,
+                      animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                      animationDelay: '0s'
+                    }}></div>
+                    <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l border-b border-gray-300 rounded-tr-lg" style={{
+                      zIndex: 0,
+                      animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                      animationDelay: '0.2s'
+                    }}></div>
+                    <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r border-t border-gray-300 rounded-bl-lg" style={{
+                      zIndex: 0,
+                      animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                      animationDelay: '0.4s'
+                    }}></div>
+                    <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l border-t border-gray-300 rounded-br-lg" style={{
+                      zIndex: 0,
+                      animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                      animationDelay: '0.6s'
+                    }}></div>
+
+                    {/* Animated Points - appearing one by one */}
+                    {analyzingStructure && (() => {
+                      const points = [
+                        { x: 40, y: 30, color: '#f59e0b', delay: 0.8 },
+                        { x: 160, y: 30, color: '#10b981', delay: 1.0 },
+                        { x: 40, y: 100, color: '#9ca3af', delay: 1.2 },
+                        { x: 160, y: 100, color: '#3b82f6', delay: 1.4 },
+                        { x: 70, y: 40, color: '#f59e0b', delay: 1.6 },
+                        { x: 120, y: 50, color: '#10b981', delay: 1.8 },
+                        { x: 60, y: 110, color: '#9ca3af', delay: 2.0 },
+                        { x: 150, y: 120, color: '#3b82f6', delay: 2.2 },
+                      ];
+                      return points.map((point, index) => (
+                        <div
+                          key={index}
+                          className="absolute rounded-full"
+                          style={{
+                            left: `${point.x}px`,
+                            top: `${point.y}px`,
+                            width: '8px',
+                            height: '8px',
+                            backgroundColor: point.color,
+                            transform: 'translate(-50%, -50%)',
+                            animation: `structurePointAppear 3s ease-in-out infinite`,
+                            animationDelay: `${point.delay}s`,
+                            boxShadow: '0 1px 4px rgba(0,0,0,0.2)'
+                          }}
+                        />
+                      ));
+                    })()}
+                  </div>
                   <p className="text-gray-700 font-semibold text-lg">Analyzing structure...</p>
                   <p className="text-gray-500 text-sm">Please wait</p>
                 </div>
@@ -3296,99 +3350,105 @@ Note:
               <>
                 {/* 2x2 Matrix Background */}
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div id="structure-graph-container" className="relative" style={{ width: '800px', height: '600px' }}>
-                    {/* Quadrants - Background layer */}
-                    <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
-                      <div className="absolute top-2 left-2 text-xs font-semibold text-yellow-700">Big Bets</div>
-                      <div className="absolute bottom-2 right-2 text-xs text-gray-400">High Impact, Low Feasibility</div>
-                    </div>
-                    <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
-                      <div className="absolute top-2 right-2 text-xs font-semibold text-green-700">Quick Wins</div>
-                      <div className="absolute bottom-2 left-2 text-xs text-gray-400">High Impact, High Feasibility</div>
-                    </div>
-                    <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
-                      <div className="absolute bottom-2 left-2 text-xs font-semibold text-gray-600">Maybe Later</div>
-                      <div className="absolute top-2 right-2 text-xs text-gray-400">Low Impact, Low Feasibility</div>
-                    </div>
-                    <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
-                      <div className="absolute bottom-2 right-2 text-xs font-semibold text-blue-700">Fill-ins</div>
-                      <div className="absolute top-2 left-2 text-xs text-gray-400">Low Impact, High Feasibility</div>
-                    </div>
+                  <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+                    <div id="structure-graph-container" className="relative" style={{ width: '1000px', height: '750px' }}>
+                      {/* Quadrants - Background layer */}
+                      <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
+                        <div className="absolute top-2 left-2 text-xs font-semibold text-yellow-700">Big Bets</div>
+                        <div className="absolute bottom-2 right-2 text-xs text-gray-400">High Impact, Low Feasibility</div>
+                      </div>
+                      <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
+                        <div className="absolute top-2 right-2 text-xs font-semibold text-green-700">Quick Wins</div>
+                        <div className="absolute bottom-2 left-2 text-xs text-gray-400">High Impact, High Feasibility</div>
+                      </div>
+                      <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
+                        <div className="absolute bottom-2 left-2 text-xs font-semibold text-gray-600">Maybe Later</div>
+                        <div className="absolute top-2 right-2 text-xs text-gray-400">Low Impact, Low Feasibility</div>
+                      </div>
+                      <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l-2 border-t-2 border-gray-300" style={{ zIndex: 0 }}>
+                        <div className="absolute bottom-2 right-2 text-xs font-semibold text-blue-700">Fill-ins</div>
+                        <div className="absolute top-2 left-2 text-xs text-gray-400">Low Impact, High Feasibility</div>
+                      </div>
 
-                    {/* Grid Lines and Score Labels - Overlay on top of quadrants */}
-                    <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 1, width: '800px', height: '600px' }}>
-                      {/* Vertical grid lines (Feasibility: 1-10) */}
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
-                        const graphWidth = 800;
-                        const graphHeight = 600;
-                        const margin = 100;
-                        const availableWidth = graphWidth - 2 * margin;
-                        const x = margin + ((score - 1) / 9) * availableWidth;
-                        return (
-                          <g key={`v-${score}`}>
-                            <line
-                              x1={x}
-                              y1={0}
-                              x2={x}
-                              y2={graphHeight}
-                              stroke="#e2e8f0"
-                              strokeWidth={1}
-                              strokeDasharray="4,4"
-                            />
-                            {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
-                            {(score % 2 === 1 || score === 10) && (
-                              <text
-                                x={x}
-                                y={graphHeight + 25}
-                                textAnchor="middle"
-                                className="text-xs fill-gray-600 font-medium"
-                              >
-                                {score}
-                              </text>
-                            )}
-                          </g>
-                        );
-                      })}
-                      {/* Horizontal grid lines (Impact: 1-10) */}
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
-                        const graphWidth = 800;
-                        const graphHeight = 600;
-                        const margin = 100;
-                        const availableHeight = graphHeight - 2 * margin;
-                        const y = (graphHeight - margin) - ((score - 1) / 9) * availableHeight;
-                        return (
-                          <g key={`h-${score}`}>
-                            <line
-                              x1={0}
-                              y1={y}
-                              x2={graphWidth}
-                              y2={y}
-                              stroke="#e2e8f0"
-                              strokeWidth={1}
-                              strokeDasharray="4,4"
-                            />
-                            {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
-                            {(score % 2 === 1 || score === 10) && (
-                              <text
-                                x={-20}
-                                y={y + 4}
-                                textAnchor="middle"
-                                className="text-xs fill-gray-600 font-medium"
-                              >
-                                {score}
-                              </text>
-                            )}
-                          </g>
-                        );
-                      })}
-                    </svg>
+                      {/* Grid Lines and Score Labels - Overlay on top of quadrants */}
+                      <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 1, width: '1000px', height: '750px' }}>
+                        {/* Vertical grid lines (Feasibility: 1-10) */}
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
+                          const graphWidth = 1000;
+                          const graphHeight = 750;
+                          const margin = 125;
+                          const availableWidth = graphWidth - 2 * margin;
+                          const x = margin + ((score - 1) / 9) * availableWidth;
+                          return (
+                            <g key={`v-${score}`}>
+                              <line
+                                x1={x}
+                                y1={0}
+                                x2={x}
+                                y2={graphHeight}
+                                stroke="#e2e8f0"
+                                strokeWidth={1}
+                                strokeDasharray="4,4"
+                              />
+                              {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
+                              {(score % 2 === 1 || score === 10) && (
+                                <text
+                                  x={x}
+                                  y={graphHeight + 25}
+                                  textAnchor="middle"
+                                  className="text-xs fill-gray-600 font-medium"
+                                >
+                                  {score}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+                        {/* Horizontal grid lines (Impact: 1-10) */}
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
+                          const graphWidth = 1000;
+                          const graphHeight = 750;
+                          const margin = 125;
+                          const availableHeight = graphHeight - 2 * margin;
+                          const y = (graphHeight - margin) - ((score - 1) / 9) * availableHeight;
+                          return (
+                            <g key={`h-${score}`}>
+                              <line
+                                x1={0}
+                                y1={y}
+                                x2={graphWidth}
+                                y2={y}
+                                stroke="#e2e8f0"
+                                strokeWidth={1}
+                                strokeDasharray="4,4"
+                              />
+                              {/* Show score labels for odd numbers (1, 3, 5, 7, 9) and also 10 */}
+                              {(score % 2 === 1 || score === 10) && (
+                                <text
+                                  x={-20}
+                                  y={y + 4}
+                                  textAnchor="middle"
+                                  className="text-xs fill-gray-600 font-medium"
+                                >
+                                  {score}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+                      </svg>
 
-                    {/* Axis Labels */}
-                    <div className="absolute -left-16 top-1/2 transform -translate-y-1/2 -rotate-90 text-sm font-semibold text-gray-700" style={{ zIndex: 2 }}>
-                      Impact →
-                    </div>
-                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-8 text-sm font-semibold text-gray-700" style={{ zIndex: 2 }}>
-                      Feasibility →
+                      {/* Axis Labels */}
+                      <div className="absolute -left-20 top-1/2 transform -translate-y-1/2 -rotate-90" style={{ zIndex: 2 }}>
+                        <div className="bg-white border border-gray-300 rounded-lg px-2.5 py-1 shadow-sm">
+                          <span className="text-sm font-semibold text-gray-700">Impact →</span>
+                        </div>
+                      </div>
+                      <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-10" style={{ zIndex: 2 }}>
+                        <div className="bg-white border border-gray-300 rounded-lg px-2.5 py-1 shadow-sm">
+                          <span className="text-sm font-semibold text-gray-700">Feasibility →</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3601,16 +3661,8 @@ Note:
                     <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
                   </div>
 
-                  <div className="relative h-32 bg-gray-50 rounded-lg mb-3 overflow-hidden">
+                  <div className="relative h-32 rounded-lg mb-3 overflow-hidden">
                     <svg className="w-full h-full" viewBox="0 0 200 100" preserveAspectRatio="xMidYMid meet">
-                      {/* Background grid lines for better visualization */}
-                      <defs>
-                        <pattern id="grid-structure" width="10" height="10" patternUnits="userSpaceOnUse">
-                          <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
-                        </pattern>
-                      </defs>
-                      <rect x="0" y="0" width="200" height="100" fill="url(#grid-structure)" />
-
                       {/* Calculate X positions to fill the box */}
                       {(() => {
                         const pointCount = creativityHistory.length;
@@ -3625,7 +3677,7 @@ Note:
 
                         return (
                           <>
-                            {/* Creativity line (green) */}
+                            {/* Creativity line (purple) */}
                             <polyline
                               points={creativityHistory.map((metrics, index) => {
                                 const x = getXPosition(index);
@@ -3634,7 +3686,7 @@ Note:
                                 return `${x},${y}`;
                               }).join(' ')}
                               fill="none"
-                              stroke="#10b981"
+                              stroke="#8b5cf6"
                               strokeWidth="2.5"
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -3651,7 +3703,7 @@ Note:
                                     cx={x}
                                     cy={y}
                                     r={isLast ? "3.5" : "3.5"}
-                                    fill="#10b981"
+                                    fill="#8b5cf6"
                                     stroke="white"
                                     strokeWidth="2"
                                     opacity="0.9"
@@ -3731,7 +3783,7 @@ Note:
                   <div className="flex items-center justify-between mt-3 relative">
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-1 bg-green-500 rounded"></div>
+                        <div className="w-8 h-1 rounded" style={{ backgroundColor: '#8b5cf6' }}></div>
                         <span className="text-xs text-gray-700">Creativity</span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -3741,7 +3793,7 @@ Note:
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                        <span className="text-green-500">↑</span>
+                        <span style={{ color: '#8b5cf6' }}>↑</span>
                         <span>{Math.round(currentCreativity * 100)}%</span>
                       </div>
                       <button
@@ -3770,8 +3822,8 @@ Note:
   // Creativity Report Page
   if (currentPage === 'report') {
     return (
-      <div className="w-full h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex flex-col">
-        <div className="bg-white shadow-sm p-6">
+      <div className="w-full h-screen flex flex-col" style={{ background: 'linear-gradient(to right, #FAF5FF 0%, #FDF2F8 50%, #FFF7ED 100%)' }}>
+        <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="flex items-center gap-2 mb-2">
@@ -3783,40 +3835,51 @@ Note:
                   Back to Canvas
                 </button>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {/* Gradient icon */}
+                <div className="w-8 h-8 flex items-center justify-center">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <linearGradient id="title-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#AD46FF" />
+                        <stop offset="50%" stopColor="#F6339A" />
+                        <stop offset="100%" stopColor="#FF6900" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="url(#title-gradient)" />
+                  </svg>
+                </div>
                 <h1 className="text-2xl font-bold text-gray-800">
                   {activeTab === 'overview' ? 'Creativity Tracking' : 'Creativity Report'}
                 </h1>
-                <span className="text-yellow-500">★</span>
               </div>
               <p className="text-sm text-gray-600 mt-1">
                 {activeTab === 'overview'
                   ? 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'
                   : 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'}
               </p>
+              {/* Tab Buttons */}
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => setActiveTab('overview')}
+                  className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${activeTab === 'overview'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                >
+                  Process
+                </button>
+                <button
+                  onClick={() => setActiveTab('timeline')}
+                  className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${activeTab === 'timeline'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                >
+                  Outcome
+                </button>
+              </div>
             </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-2 border-b border-gray-200">
-            <button
-              onClick={() => setActiveTab('overview')}
-              className={`px-6 py-2 text-sm font-medium transition-colors ${activeTab === 'overview'
-                ? 'text-purple-600 border-b-2 border-purple-600'
-                : 'text-gray-600 hover:text-gray-800'
-                }`}
-            >
-              Process
-            </button>
-            <button
-              onClick={() => setActiveTab('timeline')}
-              className={`px-6 py-2 text-sm font-medium transition-colors ${activeTab === 'timeline'
-                ? 'text-purple-600 border-b-2 border-purple-600'
-                : 'text-gray-600 hover:text-gray-800'
-                }`}
-            >
-              Outcome
-            </button>
           </div>
         </div>
 
@@ -4032,31 +4095,86 @@ Note:
                   {/* Right: Collaboration Patterns */}
                   <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
                     <h3 className="text-lg font-bold text-gray-800 mb-4">Collaboration Patterns</h3>
-                    <div className="flex flex-col items-center justify-center h-80">
-                      {/* Network/Graph Icon */}
-                      <div className="w-32 h-32 bg-purple-100 rounded-lg flex items-center justify-center mb-6">
-                        <svg width="80" height="80" viewBox="0 0 100 100" className="text-purple-600">
-                          {/* Simple network graph icon */}
-                          <circle cx="30" cy="30" r="8" fill="currentColor" />
-                          <circle cx="70" cy="30" r="8" fill="currentColor" />
-                          <circle cx="50" cy="70" r="8" fill="currentColor" />
-                          <line x1="30" y1="30" x2="50" y2="70" stroke="currentColor" strokeWidth="2" />
-                          <line x1="70" y1="30" x2="50" y2="70" stroke="currentColor" strokeWidth="2" />
-                          <line x1="30" y1="30" x2="70" y2="30" stroke="currentColor" strokeWidth="2" />
-                        </svg>
-                      </div>
-                      <p className="text-lg font-semibold text-gray-800 mb-4 text-center">
-                        {generateCollaborationInsight()}
-                      </p>
-                      <div className="bg-purple-50 rounded-lg p-4 w-full">
-                        <p className="text-sm font-semibold text-gray-700 mb-2">Insight:</p>
-                        <p className="text-sm text-gray-600">
-                          {humanScores.evaluation > aiScores.evaluation && humanScores.constraintSetting > aiScores.constraintSetting
-                            ? "Your evaluation and constraint setting scores are higher than AI contributions, indicating strong decision-making and focus."
-                            : aiScores.reframing > humanScores.reframing && aiScores.conceptualBlending > humanScores.conceptualBlending
-                              ? "AI contributions excel in reframing and conceptual blending, providing diverse perspectives and novel connections."
-                              : "Your creative process shows a balanced collaboration between human insight and AI assistance."}
-                        </p>
+                    <div className="flex flex-col items-center justify-center">
+                      {/* Collaboration Pattern Icon */}
+                      {(() => {
+                        const pattern = generateCollaborationInsight();
+                        let iconPath = '';
+                        if (pattern === "Human-Led Exploration → AI-Assisted Refinement") {
+                          iconPath = '/Human_driven.svg';
+                        } else if (pattern === "AI-Led Exploration → Human-Led Structure") {
+                          iconPath = '/AI_driven.svg';
+                        } else {
+                          iconPath = '/AI_human.svg';
+                        }
+                        return (
+                          <>
+                            <div className="flex items-center justify-center mb-6">
+                              <img
+                                src={iconPath}
+                                alt={pattern}
+                                className="w-56 h-56"
+                                style={{
+                                  animation: 'float 3s ease-in-out infinite'
+                                }}
+                              />
+                            </div>
+                            <p className="text-lg font-semibold text-gray-800 mb-4 text-center">
+                              {pattern}
+                            </p>
+                          </>
+                        );
+                      })()}
+                      <div className="bg-purple-50 rounded-lg p-5 w-full flex-1">
+                        <p className="text-sm font-semibold text-gray-700 mb-3">Insight:</p>
+                        <div className="space-y-3 text-sm text-gray-600">
+                          {(() => {
+                            const pattern = generateCollaborationInsight();
+                            if (pattern === "Human-Led Exploration → AI-Assisted Refinement") {
+                              return (
+                                <>
+                                  <p>
+                                    Your evaluation and constraint setting scores are higher than AI contributions, indicating strong decision-making and focus. This pattern suggests you're taking the lead in exploring ideas and setting boundaries.
+                                  </p>
+                                  <p>
+                                    The AI serves as a refinement tool, helping you polish and expand upon your initial concepts. This collaborative approach leverages your domain expertise while benefiting from AI's generative capabilities.
+                                  </p>
+                                  <p className="text-xs text-gray-500 italic">
+                                    Tip: Continue to leverage your judgment skills while using AI to explore variations and alternatives of your core ideas.
+                                  </p>
+                                </>
+                              );
+                            } else if (pattern === "AI-Led Exploration → Human-Led Structure") {
+                              return (
+                                <>
+                                  <p>
+                                    AI contributions excel in reframing and conceptual blending, providing diverse perspectives and novel connections. The AI is generating a wide range of ideas and exploring different angles.
+                                  </p>
+                                  <p>
+                                    Your role shifts to structuring and organizing these AI-generated concepts, applying your judgment to select, refine, and prioritize the most promising directions. This pattern maximizes AI's creative expansion while ensuring human oversight.
+                                  </p>
+                                  <p className="text-xs text-gray-500 italic">
+                                    Tip: Use AI's broad exploration to discover unexpected connections, then apply your expertise to shape and refine the most valuable insights.
+                                  </p>
+                                </>
+                              );
+                            } else {
+                              return (
+                                <>
+                                  <p>
+                                    Your creative process shows a balanced collaboration between human insight and AI assistance. Both you and the AI are contributing meaningfully across different dimensions of creativity.
+                                  </p>
+                                  <p>
+                                    This balanced approach allows for dynamic interaction where roles can shift fluidly—sometimes you lead with domain knowledge and evaluation, while other times the AI drives exploration and conceptual blending. The result is a synergistic creative partnership.
+                                  </p>
+                                  <p className="text-xs text-gray-500 italic">
+                                    Tip: Maintain this balance by actively engaging with AI suggestions while also contributing your unique perspective and domain expertise.
+                                  </p>
+                                </>
+                              );
+                            }
+                          })()}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -5294,6 +5412,71 @@ Note:
         background: 'linear-gradient(to bottom right, #FAF5FF, #FDF2F8, #FFF7ED)'
       }}
     >
+      {/* Structure Analysis Loading Screen - Show in Exploration Mode when analyzing */}
+      {mode === 'exploration' && analyzingStructure && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
+            {/* Mini Structure Preview - Icon-like */}
+            <div className="relative" style={{ width: '200px', height: '150px' }}>
+              {/* Animated Quadrants */}
+              <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r border-b border-gray-300 rounded-tl-lg" style={{
+                zIndex: 0,
+                animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                animationDelay: '0s'
+              }}></div>
+              <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-green-50 border-l border-b border-gray-300 rounded-tr-lg" style={{
+                zIndex: 0,
+                animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                animationDelay: '0.2s'
+              }}></div>
+              <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gray-50 border-r border-t border-gray-300 rounded-bl-lg" style={{
+                zIndex: 0,
+                animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                animationDelay: '0.4s'
+              }}></div>
+              <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-blue-50 border-l border-t border-gray-300 rounded-br-lg" style={{
+                zIndex: 0,
+                animation: 'structureQuadrantAppear 3s ease-in-out infinite',
+                animationDelay: '0.6s'
+              }}></div>
+
+              {/* Animated Points - appearing one by one */}
+              {(() => {
+                const points = [
+                  { x: 40, y: 30, color: '#f59e0b', delay: 0.8 },
+                  { x: 160, y: 30, color: '#10b981', delay: 1.0 },
+                  { x: 40, y: 100, color: '#9ca3af', delay: 1.2 },
+                  { x: 160, y: 100, color: '#3b82f6', delay: 1.4 },
+                  { x: 70, y: 40, color: '#f59e0b', delay: 1.6 },
+                  { x: 120, y: 50, color: '#10b981', delay: 1.8 },
+                  { x: 60, y: 110, color: '#9ca3af', delay: 2.0 },
+                  { x: 150, y: 120, color: '#3b82f6', delay: 2.2 },
+                ];
+                return points.map((point, index) => (
+                  <div
+                    key={index}
+                    className="absolute rounded-full"
+                    style={{
+                      left: `${point.x}px`,
+                      top: `${point.y}px`,
+                      width: '8px',
+                      height: '8px',
+                      backgroundColor: point.color,
+                      transform: 'translate(-50%, -50%)',
+                      animation: `structurePointAppear 3s ease-in-out infinite`,
+                      animationDelay: `${point.delay}s`,
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.2)'
+                    }}
+                  />
+                ));
+              })()}
+            </div>
+            <p className="text-gray-700 font-semibold text-lg">Analyzing structure...</p>
+            <p className="text-gray-500 text-sm">Please wait</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex overflow-hidden relative">
         {/* Top Menu Bar - Only in Exploration Mode, Canvas Centered */}
         {mode === 'exploration' && nodes.length > 0 && (
@@ -5577,8 +5760,9 @@ Note:
                             borderGradient = '#666666'; // Dark gray border
                             backgroundGradient = 'radial-gradient(circle, #FFFFFF 0%, #FEF7F7 50%, #FDF2F8 100%)'; // Very light white to soft pink/lavender gradient
                           } else if (nodeCreationType === 'co-creation') {
-                            borderGradient = 'linear-gradient(to right, #AD46FF 0%, #F6339A 50%, #FF6900 100%)'; // Vibrant neon gradient border (100% opacity)
-                            backgroundGradient = 'linear-gradient(to right, rgba(173, 70, 255, 0.08) 0%, rgba(246, 51, 154, 0.08) 50%, rgba(255, 105, 0, 0.08) 100%)'; // Same gradient with 8% opacity (lighter)
+                            // Softer blend of Human (purple) and AI (orange) colors for natural harmony
+                            borderGradient = 'linear-gradient(to right, #B855E6 0%, #D9738F 50%, #F59E6B 100%)'; // Soft purple to peach gradient border
+                            backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #E8D5F5 50%, #FFE8D5 100%)'; // White to more visible lavender-peach blend
                           } else if (nodeCreationType === 'human') {
                             borderGradient = '#9810FA'; // Solid purple border
                             backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #EED8FF 100%)'; // White to soft lavender gradient
@@ -5623,11 +5807,6 @@ Note:
                                           : undefined
                                 }}
                               >
-                                {node.category && (
-                                  <span className="absolute -top-2 left-1/2 transform -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-semibold text-gray-600 bg-white shadow-sm border border-gray-200 whitespace-nowrap">
-                                    {node.category}
-                                  </span>
-                                )}
                                 <div
                                   className="cursor-pointer w-full h-full flex flex-col items-center justify-center text-center px-2 py-1"
                                   style={{
@@ -5807,7 +5986,13 @@ Note:
           {loading && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
               <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
-                <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></div>
+                <div className="flex items-center gap-1 text-4xl font-bold text-gray-800">
+                  <span>N</span>
+                  <span className="relative inline-block w-10 h-10">
+                    <span className="absolute inset-0 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></span>
+                  </span>
+                  <span className="ml-1">AI</span>
+                </div>
                 <p className="text-gray-700 font-semibold text-lg">Generating ideas...</p>
                 <p className="text-gray-500 text-sm">Please wait</p>
               </div>
@@ -6115,16 +6300,8 @@ Note:
                 </div>
                 <div className="border-t border-dotted border-blue-300 mb-3"></div>
 
-                <div className="relative h-32 bg-gray-50 rounded-lg mb-3 overflow-hidden">
+                <div className="relative h-32 rounded-lg mb-3 overflow-hidden">
                   <svg className="w-full h-full" viewBox="0 0 200 100" preserveAspectRatio="xMidYMid meet">
-                    {/* Background grid lines for better visualization */}
-                    <defs>
-                      <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
-                      </pattern>
-                    </defs>
-                    <rect x="0" y="0" width="200" height="100" fill="url(#grid)" />
-
                     {/* Calculate X positions to fill the box */}
                     {(() => {
                       const pointCount = creativityHistory.length;
@@ -6141,7 +6318,7 @@ Note:
 
                       return (
                         <>
-                          {/* Creativity line (green) */}
+                          {/* Creativity line (purple) */}
                           <polyline
                             points={creativityHistory.map((metrics, index) => {
                               const x = getXPosition(index);
@@ -6150,7 +6327,7 @@ Note:
                               return `${x},${y}`;
                             }).join(' ')}
                             fill="none"
-                            stroke="#10b981"
+                            stroke="#8b5cf6"
                             strokeWidth="2.5"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -6167,7 +6344,7 @@ Note:
                                   cx={x}
                                   cy={y}
                                   r={isLast ? "3.5" : "3.5"}
-                                  fill="#10b981"
+                                  fill="#8b5cf6"
                                   stroke="white"
                                   strokeWidth="2"
                                   opacity="0.9"
@@ -6247,7 +6424,7 @@ Note:
                 <div className="flex items-center justify-between mt-3 relative">
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-1 bg-green-500 rounded"></div>
+                      <div className="w-8 h-1 rounded" style={{ backgroundColor: '#8b5cf6' }}></div>
                       <span className="text-xs text-gray-700">Creativity</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -6257,7 +6434,7 @@ Note:
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                      <span className="text-green-500">↑</span>
+                      <span style={{ color: '#8b5cf6' }}>↑</span>
                       <span>{Math.round(currentCreativity * 100)}%</span>
                     </div>
                     <button
