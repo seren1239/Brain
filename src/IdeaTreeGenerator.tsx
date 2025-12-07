@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus } from 'lucide-react';
 
 // API URL: Use environment variable or fallback to localhost for development
 // In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
@@ -178,6 +178,7 @@ export default function IdeaTreeGenerator() {
   const [nodeInitialPosition, setNodeInitialPosition] = useState<{ impact: number; feasibility: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
+  const [hoveredLineType, setHoveredLineType] = useState<'human' | 'ai' | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
@@ -435,11 +436,20 @@ export default function IdeaTreeGenerator() {
           }
         } else {
           // Human manually creating node
-          scores.semantic_generative_score = 1; // adds 1 small new idea
-          // Human creation might also have domain knowledge
-          const contentLength = (eventData.new_content || '').length;
-          if (contentLength > 30) {
-            scores.semantic_domain_score = 1; // light contextual detail
+          scores.semantic_generative_score = 1; // adds 1 small new idea (작은 새로운 아이디어 1개 추가)
+
+          // Domain knowledge (도메인 지식·맥락 제공)
+          const content = (eventData.new_content || '').toLowerCase();
+          const contentLength = content.length;
+          const domainKeywords = ['user', 'customer', 'industry', 'market', 'process', 'workflow', 'system', 'platform', 'technology', 'method', 'approach', 'strategy', 'business', 'organization'];
+          const domainKeywordCount = domainKeywords.filter(kw => content.includes(kw)).length;
+
+          if (contentLength > 200 || domainKeywordCount >= 3) {
+            scores.semantic_domain_score = 3; // deep professional knowledge (전문적·산업적 깊이를 가진 지식 제공)
+          } else if (contentLength > 100 || domainKeywordCount >= 2) {
+            scores.semantic_domain_score = 2; // moderate contextualization (프로세스·사용자·산업 관련 구체적 맥락 추가)
+          } else if (contentLength > 30 || domainKeywordCount >= 1) {
+            scores.semantic_domain_score = 1; // light contextual detail (가벼운 현실적 맥락 정보 1~2개)
           }
         }
         break;
@@ -451,23 +461,39 @@ export default function IdeaTreeGenerator() {
           const newText = eventData.new_content || '';
           const similarity = calculateTextSimilarity(oldText, newText);
           if (similarity < 0.3) {
-            scores.semantic_reframing_score = 3; // full redefinition
+            scores.semantic_reframing_score = 3; // full redefinition (문제 정의 자체를 바꾸는 강한 재프레이밍)
           } else if (similarity < 0.6) {
-            scores.semantic_reframing_score = 2; // clear shift
+            scores.semantic_reframing_score = 2; // clear shift (명확한 관점 전환 또는 가정 변화)
           } else if (similarity < 0.8) {
-            scores.semantic_reframing_score = 1; // minor adjustment
+            scores.semantic_reframing_score = 1; // minor adjustment (작은 방향 조정)
           }
 
-          // Check for constraint setting
-          const constraintKeywords = ['constraint', 'limit', 'must', 'require', 'only', 'specific'];
-          const hasConstraint = constraintKeywords.some(kw => newText.toLowerCase().includes(kw));
-          if (hasConstraint) {
-            scores.semantic_constraint_score = 2; // moderate narrowing
+          // Check for constraint setting (제약 부여)
+          const constraintKeywords = ['constraint', 'limit', 'must', 'require', 'only', 'specific', 'within', 'bound', 'restrict', 'focus', 'narrow', 'scope', 'cannot', 'should not', 'must not'];
+          const constraintMatches = constraintKeywords.filter(kw => newText.toLowerCase().includes(kw));
+          const constraintCount = constraintMatches.length;
+          if (constraintCount >= 3) {
+            scores.semantic_constraint_score = 3; // strong constraint (문제 해결 가능성을 결정하는 강한 제약 설정)
+          } else if (constraintCount >= 2) {
+            scores.semantic_constraint_score = 2; // moderate narrowing (중간 수준 제약, 명확한 스코프 설정)
+          } else if (constraintCount >= 1) {
+            scores.semantic_constraint_score = 1; // small constraint (작은 제약, 가벼운 범위 축소)
           }
 
-          // Domain knowledge
-          if (newText.length > oldText.length * 1.5) {
-            scores.semantic_domain_score = 2; // moderate contextualization
+          // Domain knowledge (도메인 지식·맥락 제공)
+          const addedLength = newText.length - oldText.length;
+          const addedRatio = oldText.length > 0 ? addedLength / oldText.length : 0;
+
+          // Check for domain-specific keywords or detailed context
+          const domainKeywords = ['user', 'customer', 'industry', 'market', 'process', 'workflow', 'system', 'platform', 'technology', 'method', 'approach', 'strategy', 'business', 'organization'];
+          const domainKeywordCount = domainKeywords.filter(kw => newText.toLowerCase().includes(kw)).length;
+
+          if (addedLength > 200 || (addedRatio > 1.5 && domainKeywordCount >= 3)) {
+            scores.semantic_domain_score = 3; // deep professional knowledge (전문적·산업적 깊이를 가진 지식 제공)
+          } else if (addedLength > 100 || (addedRatio > 1.0 && domainKeywordCount >= 2)) {
+            scores.semantic_domain_score = 2; // moderate contextualization (프로세스·사용자·산업 관련 구체적 맥락 추가)
+          } else if (addedLength > 30 || domainKeywordCount >= 1) {
+            scores.semantic_domain_score = 1; // light contextual detail (가벼운 현실적 맥락 정보 1~2개)
           }
         }
         break;
@@ -628,6 +654,7 @@ export default function IdeaTreeGenerator() {
       ai_score_total: aiScoreTotal,
       curve_human_ratio: creativity,
       curve_ai_ratio: dependency,
+      event_history_length: eventHistory.length, // Store the eventHistory length at this point
       // Keep old fields for backward compatibility
       fluency: normalizedHumanScore,
       flexibility: normalizedAiScore,
@@ -645,10 +672,59 @@ export default function IdeaTreeGenerator() {
   // Extract keyword from text (fallback for nodes without keyword)
   const extractKeyword = (text) => {
     if (!text) return '';
-    // Take first 2-4 words as keyword
-    const words = text.trim().split(/\s+/);
-    if (words.length <= 4) return text;
-    return words.slice(0, 3).join(' ');
+
+    let cleanedText = text.trim();
+
+    // Remove common introductory phrases and filler words
+    // Pattern: subject + verb patterns that are not the main action
+    const patternsToRemove = [
+      // "I want to", "I want", "I need to", "I need"
+      /^i\s+(want|need|would\s+like|am\s+looking\s+for|'m\s+looking\s+for)\s+(to\s+)?/i,
+      // "Let me", "Let's"
+      /^let(?:'s|\s+me)\s+/i,
+      // "Can you", "Could you", "Would you", "Will you"
+      /^(can|could|would|will)\s+you\s+/i,
+      // "Please"
+      /^please\s+/i,
+      // "I'm trying to", "I am trying to"
+      /^i\s+(am\s+)?trying\s+to\s+/i,
+      // "I hope to", "I wish to"
+      /^i\s+(hope|wish)\s+to\s+/i,
+      // "I'd like to", "I would like to"
+      /^i\s*('d|would)\s+like\s+(to\s+)?/i,
+      // "Help me", "Help us"
+      /^help\s+(me|us)\s+/i,
+      // "Make me", "Create me"
+      /^(make|create)\s+me\s+(a\s+)?/i,
+      // "I'm going to", "I am going to"
+      /^i\s+(am\s+)?going\s+to\s+/i,
+      // "I should", "I must", "I have to"
+      /^i\s+(should|must|have\s+to)\s+/i
+    ];
+
+    // Apply all patterns
+    for (const pattern of patternsToRemove) {
+      cleanedText = cleanedText.replace(pattern, '');
+    }
+
+    cleanedText = cleanedText.trim();
+
+    // Capitalize first letter if needed
+    if (cleanedText.length > 0) {
+      cleanedText = cleanedText.charAt(0).toUpperCase() + cleanedText.slice(1);
+    }
+
+    // If text is short enough, return as is
+    if (cleanedText.length <= 50) return cleanedText;
+
+    // Otherwise, take first meaningful part (up to 50 characters or first sentence)
+    const firstSentence = cleanedText.split(/[.!?]/)[0].trim();
+    if (firstSentence.length <= 50) return firstSentence;
+
+    // Take first 50 characters and cut at word boundary
+    const truncated = cleanedText.substring(0, 50);
+    const lastSpace = truncated.lastIndexOf(' ');
+    return lastSpace > 0 ? truncated.substring(0, lastSpace) + '...' : truncated + '...';
   };
 
   // Get text to display based on node size (to prevent overflow)
@@ -690,10 +766,13 @@ export default function IdeaTreeGenerator() {
     try {
       // First, create TOPIC node
       const topicNodeId = Date.now();
+      const topicKeyword = extractKeyword(topicText);
       const topicNode = {
         id: topicNodeId,
-        text: topicText,
-        keyword: extractKeyword(topicText),
+        text: topicText, // Full text for backward compatibility
+        title: topicKeyword, // Short keyword for display in node
+        description: topicText, // Full input text for description box
+        keyword: topicKeyword,
         type: 'topic',
         step: 0,
         category: 'TOPIC',
@@ -715,13 +794,15 @@ export default function IdeaTreeGenerator() {
 
       // Initialize Creative Flow Timeline with Human 100%, Dependency 0%
       // This represents the initial human input starting the creative process
+      // Note: trackEvent is called before this, so eventHistory.length will be 1
       setCreativityHistory([{
         creativity: 1.0,
         dependency: 0.0,
         human_score_total: 0,
         ai_score_total: 0,
         curve_human_ratio: 1.0,
-        curve_ai_ratio: 0.0
+        curve_ai_ratio: 0.0,
+        event_history_length: 1 // Initial Input event
       }]);
 
       // Then generate Step 1 nodes (Context, User, Task, Goal) as children of TOPIC
@@ -1063,9 +1144,7 @@ Note:
         });
       }
 
-      const newMetrics = calculateCreativityIndex();
-      setCreativityHistory(prev => [...prev, newMetrics]);
-
+      // Don't update creativityHistory here - will be updated by caller if needed
       return newNodes;
     } catch (err) {
       console.error('Step 2 generation error:', err);
@@ -1086,6 +1165,9 @@ Note:
 
     setLoading(true);
     await generateStep3InsightsInternal(parentNode);
+    // Update creativityHistory for single node expansion
+    const newMetrics = calculateCreativityIndex();
+    setCreativityHistory(prev => [...prev, newMetrics]);
     setLoading(false);
   };
 
@@ -1105,6 +1187,9 @@ Note:
 
     setLoading(true);
     await generateStep2SubNodesInternal(parentNode);
+    // Update creativityHistory for single node expansion
+    const newMetrics = calculateCreativityIndex();
+    setCreativityHistory(prev => [...prev, newMetrics]);
     setLoading(false);
   };
 
@@ -1275,9 +1360,7 @@ Note:
         });
       }
 
-      const newMetrics = calculateCreativityIndex();
-      setCreativityHistory(prev => [...prev, newMetrics]);
-
+      // Don't update creativityHistory here - will be updated by caller if needed
       return newNodes;
     } catch (err) {
       console.error('Step 3 generation error:', err);
@@ -1454,9 +1537,7 @@ Note:
         });
       }
 
-      const newMetrics = calculateCreativityIndex();
-      setCreativityHistory(prev => [...prev, newMetrics]);
-
+      // Don't update creativityHistory here - will be updated by caller if needed
       return newNodes;
     } catch (err) {
       console.error('Step 4 generation error:', err);
@@ -1474,6 +1555,9 @@ Note:
 
     setLoading(true);
     await generateStep4OpportunitiesInternal(parentNode);
+    // Update creativityHistory for single node expansion
+    const newMetrics = calculateCreativityIndex();
+    setCreativityHistory(prev => [...prev, newMetrics]);
     setLoading(false);
   };
 
@@ -1760,6 +1844,9 @@ JSON-ONLY OUTPUT FORMAT
 
   const handleNodeClick = (node, e) => {
     if (editingNode === node.id) return;
+
+    // Clear reflection focus when clicking on a node
+    setFocusedReflection(null);
 
     // Shift + Click: Toggle structure selection (toggle on/off)
     if (e && e.shiftKey) {
@@ -2351,18 +2438,24 @@ Note:
 
     setLoading(true);
     try {
-      // Generate for each leaf node based on its type
-      for (const node of leafNodes) {
+      // Generate all nodes in parallel using Promise.all
+      const generationPromises = leafNodes.map(node => {
         if (node.type === 'main' && node.step === 1) {
-          await generateStep2SubNodes(node);
+          return generateStep2SubNodesForMulti(node);
         } else if (node.type === 'sub' && node.step === 2) {
-          await generateStep3Insights(node);
+          return generateStep3InsightsForMulti(node);
         } else if (node.type === 'insight' && node.step === 3) {
-          await generateStep4Opportunities(node);
+          return generateStep4OpportunitiesForMulti(node);
         }
-        // Add small delay between generations to avoid overwhelming the API
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+        return Promise.resolve([]);
+      });
+
+      // Wait for all generations to complete
+      await Promise.all(generationPromises);
+
+      // Update Creative Flow Timeline only once after all nodes are generated
+      const newMetrics = calculateCreativityIndex();
+      setCreativityHistory(prev => [...prev, newMetrics]);
     } catch (err) {
       console.error('Expand all error:', err);
       alert('An error occurred while expanding nodes.');
@@ -2420,14 +2513,19 @@ Note:
     setFocusedNode(nodeId);
     setSelectedNode(nodeId);
 
+    // Focus the reflection box (will remain focused until another reflection is clicked or canvas is clicked)
+    setFocusedReflection(reflectionId);
+
     // Scroll to the node
     const nodeElement = nodeRefs.current[nodeId];
     if (nodeElement) {
       nodeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    // Clear focus after 2 seconds, but keep selection
-    setTimeout(() => setFocusedNode(null), 2000);
+    // Clear node focus after 2 seconds, but keep reflection focus and selection
+    setTimeout(() => {
+      setFocusedNode(null);
+    }, 2000);
   };
 
   const handleReflectionAlertClick = (nodeId) => {
@@ -2493,6 +2591,22 @@ Note:
   };
 
   const handleCanvasMouseDown = (e) => {
+    // If clicking outside the reflection sidebar, clear reflection focus
+    if (mode === 'exploration' && !isSpacePressed) {
+      // Check if clicking inside the reflection sidebar (including reflection boxes)
+      const clickedInSidebar = e.target.closest('.fixed.right-0.top-0.h-full') ||
+        e.target.closest('[class*="reflection"]') ||
+        e.target.closest('button[title*="Reflection"]') ||
+        e.target.closest('button[title*="Open Reflections"]') ||
+        e.target.closest('button[title*="Close Reflections"]');
+
+      // If not clicking in sidebar, clear reflection focus
+      // (This includes clicking on nodes, canvas, or any other area outside sidebar)
+      if (!clickedInSidebar) {
+        setFocusedReflection(null);
+      }
+    }
+
     if (isSpacePressed && !e.target.closest('.absolute')) {
       setIsPanning(true);
       const container = e.currentTarget;
@@ -2856,12 +2970,15 @@ Note:
             y1={parentPos.y + parentSize / 2}
             x2={nodePos.x + nodeSize / 2}
             y2={nodePos.y + nodeSize / 2}
-            stroke={isSelectedConnection ? "url(#multiSelectGradient)" : "#cbd5e1"}
-            strokeWidth={isSelectedConnection ? "3" : "2"}
+            stroke={isSelectedConnection ? "#9810FA" : "#D2D2D2"}
+            strokeWidth="2"
+            strokeDasharray={isSelectedConnection ? "none" : "5,5"}
+            strokeLinecap="round"
+            opacity="1"
             className={isNewConnection ? "line-draw" : ""}
             style={{
               transition: isNewConnection ? 'none' : 'all 0.4s ease-out',
-              filter: isSelectedConnection ? 'drop-shadow(0 0 3px rgba(168, 85, 247, 0.5))' : 'none'
+              filter: isSelectedConnection ? 'drop-shadow(0 0 3px rgba(152, 16, 250, 0.5))' : 'none'
             }}
           />
         );
@@ -4015,7 +4132,12 @@ Note:
                       {/* Tooltip */}
                       {hoveredPointIndex !== null && (() => {
                         // Calculate semantic scores up to this point
-                        const pointEvents = eventHistory.slice(0, hoveredPointIndex + 1);
+                        // Use the eventHistory length stored in creativityHistory to get the correct events
+                        const metrics = creativityHistory[hoveredPointIndex];
+                        const eventHistoryLengthAtPoint = typeof metrics === 'object' && metrics.event_history_length !== undefined
+                          ? metrics.event_history_length
+                          : eventHistory.length; // Fallback to current length if not stored
+                        const pointEvents = eventHistory.slice(0, eventHistoryLengthAtPoint);
                         const calculateSemanticScores = (actor) => {
                           const events = pointEvents.filter(e => e.actor === actor);
                           if (events.length === 0) {
@@ -4028,20 +4150,26 @@ Note:
                               generationExpansion: 0
                             };
                           }
+
+                          // Aggregate scores from events (each event can have 0-3 points per dimension)
                           const totalReframing = events.reduce((sum, e) => sum + ((e as any).semantic_reframing_score || 0), 0);
                           const totalBlending = events.reduce((sum, e) => sum + ((e as any).semantic_blending_score || 0), 0);
                           const totalDomain = events.reduce((sum, e) => sum + ((e as any).semantic_domain_score || 0), 0);
                           const totalEvaluation = events.reduce((sum, e) => sum + ((e as any).semantic_evaluation_score || 0), 0);
                           const totalConstraint = events.reduce((sum, e) => sum + ((e as any).semantic_constraint_score || 0), 0);
                           const totalGenerative = events.reduce((sum, e) => sum + ((e as any).semantic_generative_score || 0), 0);
+
+                          // Normalize: Use average score per event (max 3 per event), then normalize to 0-1
+                          // This gives more meaningful scores even with few events (same as Co-Creative Competence Distribution)
                           const avgReframing = events.length > 0 ? totalReframing / events.length : 0;
                           const avgBlending = events.length > 0 ? totalBlending / events.length : 0;
                           const avgDomain = events.length > 0 ? totalDomain / events.length : 0;
                           const avgEvaluation = events.length > 0 ? totalEvaluation / events.length : 0;
                           const avgConstraint = events.length > 0 ? totalConstraint / events.length : 0;
                           const avgGenerative = events.length > 0 ? totalGenerative / events.length : 0;
+
                           return {
-                            reframing: Math.min(avgReframing / 3, 1),
+                            reframing: Math.min(avgReframing / 3, 1), // Normalize: avg score (0-3) / 3 = 0-1
                             conceptualBlending: Math.min(avgBlending / 3, 1),
                             domainKnowledge: Math.min(avgDomain / 3, 1),
                             evaluation: Math.min(avgEvaluation / 3, 1),
@@ -4050,7 +4178,8 @@ Note:
                           };
                         };
                         const aiScores = calculateSemanticScores('AI');
-                        const metrics = creativityHistory[hoveredPointIndex];
+                        const humanScores = calculateSemanticScores('HUMAN');
+                        // metrics already defined above
                         const humanRatio = typeof metrics === 'object' ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0) : 0;
                         const aiRatio = typeof metrics === 'object' ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0) : 0;
                         const aiScoreTotal = typeof metrics === 'object' ? (metrics.ai_score_total ?? 0) : 0;
@@ -4084,54 +4213,141 @@ Note:
                           ? Math.max(margin, tooltipPosition.y - tooltipHeight - margin)
                           : Math.min(tooltipPosition.y + 20, containerHeight - tooltipHeight - margin);
 
-                        return (
-                          <div
-                            className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
-                            style={{
-                              left: `${xPos}px`,
-                              top: `${yPos}px`,
-                              transform: 'translateX(-50%)',
-                              maxWidth: '280px',
-                              width: '280px'
-                            }}
-                          >
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
-                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                                  </svg>
+                        // Show different tooltip based on hovered line type
+                        if (hoveredLineType === 'human') {
+                          return (
+                            <div
+                              className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
+                              style={{
+                                left: `${xPos}px`,
+                                top: `${yPos}px`,
+                                transform: 'translateX(-50%)',
+                                maxWidth: '280px',
+                                width: '280px'
+                              }}
+                            >
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)', borderRadius: '14px' }}>
+                                    <User size={16} className="text-purple-600" />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-xs text-gray-600 mb-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-semibold text-purple-600 w-24">Ratio:</span>
+                                  <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-purple-600 w-24">Total Human Score:</span>
+                                  <span>{humanScoreTotal.toFixed(1)}</span>
+                                </div>
+                              </div>
+                              <div className="text-xs text-gray-600 mb-2">
+                                <span className="font-semibold">Framework Name:</span>
+                                <span className="ml-2">Co-Creative Competence</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Generative Expansion:</span>
+                                    <span className="ml-2">{(humanScores.generationExpansion * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Conceptual Blending:</span>
+                                    <span className="ml-2">{(humanScores.conceptualBlending * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Constraint Setting:</span>
+                                    <span className="ml-2">{(humanScores.constraintSetting * 100).toFixed(0)}%</span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Reframing:</span>
+                                    <span className="ml-2">{(humanScores.reframing * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Evaluation:</span>
+                                    <span className="ml-2">{(humanScores.evaluation * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Domain Knowledge:</span>
+                                    <span className="ml-2">{(humanScores.domainKnowledge * 100).toFixed(0)}%</span>
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                            <div className="text-xs text-gray-600 mb-2">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="font-semibold text-orange-600">Ratio:</span>
-                                <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                          );
+                        } else {
+                          // AI tooltip (existing)
+                          return (
+                            <div
+                              className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
+                              style={{
+                                left: `${xPos}px`,
+                                top: `${yPos}px`,
+                                transform: 'translateX(-50%)',
+                                maxWidth: '280px',
+                                width: '280px'
+                              }}
+                            >
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
+                                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                    </svg>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-orange-600">Total AI Score:</span>
-                                <span>{aiScoreTotal.toFixed(1)}</span>
+                              <div className="text-xs text-gray-600 mb-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-semibold text-orange-600 w-24">Ratio:</span>
+                                  <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-orange-600 w-24">Total AI Score:</span>
+                                  <span>{aiScoreTotal.toFixed(1)}</span>
+                                </div>
+                              </div>
+                              <div className="text-xs text-gray-600 mb-2">
+                                <span className="font-semibold">Framework Name:</span>
+                                <span className="ml-2">Co-Creative Competence</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Generation Expansion:</span>
+                                    <span className="ml-2">{(aiScores.generationExpansion * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Conceptual Blending:</span>
+                                    <span className="ml-2">{(aiScores.conceptualBlending * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Constraint Setting:</span>
+                                    <span className="ml-2">{(aiScores.constraintSetting * 100).toFixed(0)}%</span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Reframing:</span>
+                                    <span className="ml-2">{(aiScores.reframing * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Evaluation:</span>
+                                    <span className="ml-2">{(aiScores.evaluation * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="text-gray-700 flex justify-between">
+                                    <span>Domain Knowledge:</span>
+                                    <span className="ml-2">{(aiScores.domainKnowledge * 100).toFixed(0)}%</span>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                            <div className="text-xs text-gray-600 mb-2">
-                              <span className="font-semibold">Framework Name:</span>
-                              <span className="ml-2">Co-Creative Competence</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <div>
-                                <div className="text-gray-700">Generation Expansion: {(aiScores.generationExpansion * 100).toFixed(0)}%</div>
-                                <div className="text-gray-700">Conceptual Blending: {(aiScores.conceptualBlending * 100).toFixed(0)}%</div>
-                                <div className="text-gray-700">Constraint Setting: {(aiScores.constraintSetting * 100).toFixed(0)}%</div>
-                              </div>
-                              <div>
-                                <div className="text-gray-700">Reframing: {(aiScores.reframing * 100).toFixed(0)}%</div>
-                                <div className="text-gray-700">Evaluation: {(aiScores.evaluation * 100).toFixed(0)}%</div>
-                                <div className="text-gray-700">Domain Knowledge: {(aiScores.domainKnowledge * 100).toFixed(0)}%</div>
-                              </div>
-                            </div>
-                          </div>
-                        );
+                          );
+                        }
                       })()}
 
                       <svg className="w-full h-full" viewBox="-25 0 325 100" preserveAspectRatio="xMidYMid meet">
@@ -4485,9 +4701,11 @@ Note:
                                           });
                                         }
                                         setHoveredPointIndex(index);
+                                        setHoveredLineType('human');
                                       }}
                                       onMouseLeave={() => {
                                         setHoveredPointIndex(null);
+                                        setHoveredLineType(null);
                                       }}
                                     >
                                       {isLast && (
@@ -5080,6 +5298,16 @@ Note:
         {/* Top Menu Bar - Only in Exploration Mode, Canvas Centered */}
         {mode === 'exploration' && nodes.length > 0 && (
           <div className={`absolute top-6 z-50 ${isReflectionSidebarOpen ? 'left-[calc(50%-200px)]' : 'left-1/2'} transform -translate-x-1/2`}>
+            {/* SVG Gradient Definition */}
+            <svg width="0" height="0" style={{ position: 'absolute' }}>
+              <defs>
+                <linearGradient id="sparkles-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#AD46FF" />
+                  <stop offset="50%" stopColor="#F6339A" />
+                  <stop offset="100%" stopColor="#FF6900" />
+                </linearGradient>
+              </defs>
+            </svg>
             <div className="bg-white rounded-lg shadow-lg border border-purple-200 px-2 py-2 flex items-center gap-1">
               {/* Home Button */}
               <button
@@ -5162,7 +5390,7 @@ Note:
                 className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-orange-50 transition-colors text-gray-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Expand all leaf nodes with AI"
               >
-                <Sparkles size={18} className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-orange-500" />
+                <Sparkles size={18} style={{ stroke: 'url(#sparkles-gradient)', fill: 'url(#sparkles-gradient)' }} />
                 <span>Expand with AI</span>
               </button>
             </div>
@@ -5326,7 +5554,7 @@ Note:
                   ) : (
                     <>
                       <div
-                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isSelected ? 'scale-105 ring-2 ring-blue-400' : isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
+                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isSelected ? 'scale-105' : isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
                         style={{
                           transition: node.isAnimating ? 'none' : 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
                           width: '100%',
@@ -5344,7 +5572,11 @@ Note:
                           let borderGradient = '';
                           let backgroundGradient = '';
 
-                          if (nodeCreationType === 'co-creation') {
+                          // Special styling for Topic node (initial input node)
+                          if (node.type === 'topic') {
+                            borderGradient = '#666666'; // Dark gray border
+                            backgroundGradient = 'radial-gradient(circle, #FFFFFF 0%, #FEF7F7 50%, #FDF2F8 100%)'; // Very light white to soft pink/lavender gradient
+                          } else if (nodeCreationType === 'co-creation') {
                             borderGradient = 'linear-gradient(to right, #AD46FF 0%, #F6339A 50%, #FF6900 100%)'; // Vibrant neon gradient border (100% opacity)
                             backgroundGradient = 'linear-gradient(to right, rgba(173, 70, 255, 0.08) 0%, rgba(246, 51, 154, 0.08) 50%, rgba(255, 105, 0, 0.08) 100%)'; // Same gradient with 8% opacity (lighter)
                           } else if (nodeCreationType === 'human') {
@@ -5354,9 +5586,8 @@ Note:
                             borderGradient = '#FE6215'; // Solid orange border
                             backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #FFD8BD 100%)'; // White to soft peach-beige gradient
                           } else {
-                            // Default node types (topic, main, sub, insight, opportunity)
+                            // Default node types (main, sub, insight, opportunity)
                             const defaultColors = {
-                              topic: { border: 'linear-gradient(to right, #d8b4fe 0%, #a855f7 100%)', bg: '#f3e8ff' },
                               main: { border: 'linear-gradient(to right, #93c5fd 0%, #3b82f6 100%)', bg: '#eff6ff' },
                               sub: { border: 'linear-gradient(to right, #86efac 0%, #10b981 100%)', bg: '#f0fdf4' },
                               insight: { border: 'linear-gradient(to right, #fde047 0%, #eab308 100%)', bg: '#fefce8' },
@@ -5407,7 +5638,7 @@ Note:
                                 >
                                   {/* Title - 선택되지 않은 노드는 말줄임표, 선택된 노드는 전체 title 표시 */}
                                   <p
-                                    className={`break-words text-gray-700 leading-tight font-semibold ${node.type === 'topic' ? 'text-sm' : node.type === 'main' ? 'text-xs' : 'text-xs'}`}
+                                    className={`break-words leading-tight font-semibold ${node.type === 'topic' ? 'text-sm text-[#666666] uppercase' : 'text-gray-700'} ${node.type === 'main' ? 'text-xs' : node.type === 'sub' ? 'text-xs' : 'text-xs'}`}
                                     style={{
                                       maxWidth: '100%',
                                       overflow: isSelected ? 'visible' : 'hidden',
@@ -5419,7 +5650,7 @@ Note:
                                     }}
                                     title={!isSelected ? (node.title || node.text) : undefined}
                                   >
-                                    {node.title || node.text}
+                                    {node.type === 'topic' ? (node.title || node.keyword || 'TOPIC') : (node.title || node.text)}
                                   </p>
                                 </div>
                               </div>
@@ -5631,44 +5862,171 @@ Note:
             const selectedNodeData = nodes.find(n => n.id === selectedNode);
             if (!selectedNodeData) return null;
 
-            // Determine node type label
-            const getNodeTypeLabel = (node) => {
-              if (node.category) return node.category;
-              if (node.type === 'topic') return 'Topic';
-              if (node.type === 'main') return 'Main Node';
-              if (node.type === 'sub') return 'Sub Node';
-              if (node.type === 'insight') return 'Insight';
-              if (node.type === 'opportunity') return 'Opportunity';
-              return 'Node';
+            // Determine node creation type: Human, AI, or Co-creation
+            const getNodeCreationType = (node) => {
+              // Check if node was created by AI (check both string and number ID formats)
+              const aiCreateEvent = eventHistory.find(e =>
+                e.event_type === 'Create Node' &&
+                e.actor === 'AI' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id ||
+                  (e.node_ids_involved && e.node_ids_involved.includes(node.id.toString())) ||
+                  (e.node_ids_involved && e.node_ids_involved.includes(node.id)))
+              );
+
+              // Check if node was created by Human
+              const humanCreateEvent = eventHistory.find(e =>
+                e.event_type === 'Create Node' &&
+                e.actor === 'HUMAN' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id)
+              );
+
+              // Check if node was edited by Human (check both string and number ID formats)
+              const humanEditEvent = eventHistory.find(e =>
+                e.event_type === 'Edit Node' &&
+                e.actor === 'HUMAN' &&
+                (e.node_id === node.id.toString() || e.node_id === node.id)
+              );
+
+              // Co-creation: AI created and Human edited
+              // Priority: Check edited flag first, then event history
+              if (aiCreateEvent && (node.edited || humanEditEvent)) {
+                return 'co-creation';
+              }
+
+              // Human: Human created (or manually created without AI)
+              if (humanCreateEvent || (!aiCreateEvent && node.edited)) {
+                return 'human';
+              }
+
+              // AI: AI created and not edited
+              if (aiCreateEvent && !humanEditEvent && !node.edited) {
+                return 'ai';
+              }
+
+              // Default: assume AI if no clear indication (most nodes are AI-generated)
+              return 'ai';
             };
+
+            const nodeCreationType = getNodeCreationType(selectedNodeData);
+
+            // Determine header content based on creation type
+            const getHeaderContent = () => {
+              if (nodeCreationType === 'ai') {
+                return {
+                  label: 'AI Input',
+                  icon: Bot,
+                  iconColor: 'text-orange-600',
+                  iconBg: 'linear-gradient(to right, #FFEBDD 0%, #FFD19D 100%)',
+                  headerBg: 'bg-gradient-to-r from-orange-50/30 to-transparent'
+                };
+              } else if (nodeCreationType === 'co-creation') {
+                return {
+                  label: 'AI-Human Co-creation',
+                  icon: UserPlus,
+                  iconColor: 'text-purple-600',
+                  iconBg: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                  headerBg: 'bg-gradient-to-r from-purple-50/30 to-transparent'
+                };
+              } else {
+                // human
+                return {
+                  label: 'Human Input',
+                  icon: User,
+                  iconColor: 'text-purple-600',
+                  iconBg: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                  headerBg: 'bg-gradient-to-r from-purple-50/30 to-transparent'
+                };
+              }
+            };
+
+            const headerContent = getHeaderContent();
+            const HeaderIcon = headerContent.icon;
+
+            // Determine button styles based on creation type
+            const getButtonStyles = () => {
+              if (nodeCreationType === 'co-creation') {
+                // Both buttons use purple gradient
+                return {
+                  humanButton: {
+                    background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                    hoverBackground: 'linear-gradient(to right, #E1B8FF 0%, #D4A5FF 100%)',
+                    textColor: 'text-purple-700',
+                    iconColor: 'text-purple-700'
+                  },
+                  aiButton: {
+                    background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                    hoverBackground: 'linear-gradient(to right, #E1B8FF 0%, #D4A5FF 100%)',
+                    textColor: 'text-purple-700',
+                    iconColor: 'text-purple-700'
+                  }
+                };
+              } else if (nodeCreationType === 'ai') {
+                // Human button: purple, AI button: orange
+                return {
+                  humanButton: {
+                    background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                    hoverBackground: 'linear-gradient(to right, #E1B8FF 0%, #D4A5FF 100%)',
+                    textColor: 'text-purple-700',
+                    iconColor: 'text-purple-700'
+                  },
+                  aiButton: {
+                    background: 'linear-gradient(to right, #FFEBDD 0%, #FFD19D 100%)',
+                    hoverBackground: 'linear-gradient(to right, #FFD19D 0%, #FFC085 100%)',
+                    textColor: 'text-orange-700',
+                    iconColor: 'text-orange-700'
+                  }
+                };
+              } else {
+                // human: both buttons use purple gradient
+                return {
+                  humanButton: {
+                    background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
+                    hoverBackground: 'linear-gradient(to right, #E1B8FF 0%, #D4A5FF 100%)',
+                    textColor: 'text-purple-700',
+                    iconColor: 'text-purple-700'
+                  },
+                  aiButton: {
+                    background: 'linear-gradient(to right, #FFEBDD 0%, #FFD19D 100%)',
+                    hoverBackground: 'linear-gradient(to right, #FFD19D 0%, #FFC085 100%)',
+                    textColor: 'text-orange-700',
+                    iconColor: 'text-orange-700'
+                  }
+                };
+              }
+            };
+
+            const buttonStyles = getButtonStyles();
 
             return (
               <div className={`fixed bottom-6 w-[480px] z-[100] shadow-2xl bg-white rounded-lg border border-gray-200 ${isReflectionSidebarOpen ? 'left-[calc(50%-200px)]' : 'left-1/2'} transform -translate-x-1/2`} style={{ pointerEvents: 'auto' }}>
-                {/* Header with title and buttons */}
-                <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-gray-800">{getNodeTypeLabel(selectedNodeData)}</h3>
+                {/* Header with icon, title and buttons */}
+                <div className={`flex items-center justify-between p-4 border-b border-gray-200 ${headerContent.headerBg}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 flex items-center justify-center" style={{ background: headerContent.iconBg, borderRadius: '14px' }}>
+                      <HeaderIcon size={16} className={headerContent.iconColor} />
+                    </div>
+                    <span className="text-sm font-medium text-gray-700">{headerContent.label}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleEditDescription(selectedNodeData)}
-                      className="p-2 hover:bg-blue-50 rounded transition-colors"
+                      className="p-2 hover:bg-gray-100 rounded transition-colors"
                       title="Edit Description"
                     >
-                      <Edit2 size={18} className="text-blue-600" />
+                      <Edit2 size={18} style={{ color: '#99A1AF' }} />
                     </button>
                     <button
                       onClick={() => setSelectedNode(null)}
-                      className="p-2 hover:bg-gray-50 rounded transition-colors"
+                      className="p-2 hover:bg-gray-100 rounded transition-colors"
                       title="Close"
                     >
-                      <X size={18} className="text-gray-600" />
+                      <X size={18} style={{ color: '#99A1AF' }} />
                     </button>
                   </div>
                 </div>
 
                 {/* Node description */}
-                <div className="p-4 border-b border-gray-200">
+                <div className="p-4">
                   {editingDescriptionNodeId === selectedNodeData.id ? (
                     <div>
                       <textarea
@@ -5701,25 +6059,47 @@ Note:
                 </div>
 
                 {/* Action buttons */}
-                <div className="p-4 flex gap-3">
+                <div className="p-4 pt-0 flex gap-3">
                   <button
                     onClick={() => {
                       handleAddNodeClick(selectedNodeData);
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all font-medium shadow-sm"
+                    style={{ background: buttonStyles.humanButton.background }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = buttonStyles.humanButton.hoverBackground;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = buttonStyles.humanButton.background;
+                    }}
                   >
-                    <Plus size={18} />
-                    Add (Human)
+                    <User size={18} className={buttonStyles.humanButton.iconColor} />
+                    <span className={buttonStyles.humanButton.textColor}>Add (Human)</span>
                   </button>
                   <button
                     onClick={() => {
                       handleGenerate(selectedNodeData);
                     }}
                     disabled={loading}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg disabled:cursor-not-allowed transition-all font-medium shadow-sm"
+                    style={{
+                      background: loading
+                        ? 'linear-gradient(to right, #D1D5DB 0%, #9CA3AF 100%)'
+                        : buttonStyles.aiButton.background
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) {
+                        e.currentTarget.style.background = buttonStyles.aiButton.hoverBackground;
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!loading) {
+                        e.currentTarget.style.background = buttonStyles.aiButton.background;
+                      }
+                    }}
                   >
-                    <Sparkles size={18} />
-                    Add (AI)
+                    <Bot size={18} className={loading ? 'text-gray-500' : buttonStyles.aiButton.iconColor} />
+                    <span className={loading ? 'text-gray-500' : buttonStyles.aiButton.textColor}>Add (AI)</span>
                   </button>
                 </div>
               </div>
@@ -5902,7 +6282,10 @@ Note:
         {/* Reflection Sidebar Toggle Button (when closed) */}
         {!isReflectionSidebarOpen && reflections.length > 0 && (
           <button
-            onClick={() => setIsReflectionSidebarOpen(true)}
+            onClick={() => {
+              setIsReflectionSidebarOpen(true);
+              setFocusedReflection(null);
+            }}
             className="fixed top-4 right-4 z-50 w-14 h-14 bg-white rounded-lg shadow-md flex items-center justify-center hover:shadow-lg transition-all hover:scale-105"
             title="Open Reflections"
             style={{
@@ -5914,101 +6297,109 @@ Note:
         )}
 
         {/* Reflection Sidebar */}
-        {isReflectionSidebarOpen && (
-          <div className="w-96 bg-white border-l border-gray-200 overflow-y-auto p-4 relative flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Lightbulb className="text-yellow-500" size={24} />
-                <h2 className="text-xl font-bold text-gray-800">Reflections</h2>
-              </div>
-              <button
-                onClick={() => setIsReflectionSidebarOpen(false)}
-                className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                title="Close Reflections"
-              >
-                <ChevronRight size={20} className="text-gray-500" />
-              </button>
+        <div
+          className={`fixed right-0 top-0 h-full w-96 bg-white border-l border-gray-200 overflow-y-auto p-4 relative flex flex-col transition-transform duration-300 ease-in-out z-40 ${isReflectionSidebarOpen ? 'translate-x-0' : 'translate-x-full'
+            }`}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Lightbulb className="text-[#AD46FF]" size={24} strokeWidth={2.5} style={{ stroke: '#AD46FF', fill: '#AD46FF' }} />
+              <h2 className="text-xl font-bold text-gray-800">Reflections</h2>
             </div>
-
-            {reflections.length === 0 ? (
-              <div className="text-center text-gray-400 mt-8">
-                <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Generate ideas to see reflections here</p>
-              </div>
-            ) : (
-              <div className="space-y-3 pb-96">
-                {reflections.map(reflection => {
-                  const isExpanded = expandedReflectionId === reflection.id;
-
-                  // Get color scheme based on type
-                  const getTypeStyle = (type) => {
-                    switch (type) {
-                      case 'critic':
-                        return {
-                          bg: 'bg-gradient-to-br from-red-50 to-orange-50',
-                          border: 'border-red-200',
-                          title: 'Critical Question',
-                          titleColor: 'text-red-700'
-                        };
-                      case 'advice':
-                        return {
-                          bg: 'bg-gradient-to-br from-blue-50 to-cyan-50',
-                          border: 'border-blue-200',
-                          title: 'Strategic Advice',
-                          titleColor: 'text-blue-700'
-                        };
-                      default:
-                        return {
-                          bg: 'bg-gradient-to-br from-yellow-50 to-orange-50',
-                          border: 'border-yellow-200',
-                          title: 'Reflection',
-                          titleColor: 'text-gray-700'
-                        };
-                    }
-                  };
-
-                  const typeStyle = getTypeStyle(reflection.type);
-
-                  return (
-                    <div
-                      key={reflection.id}
-                      onClick={() => handleReflectionClick(reflection.id, reflection.nodeId)}
-                      className={`${typeStyle.bg} rounded-lg p-4 shadow-sm border ${typeStyle.border} relative cursor-pointer hover:shadow-md transition-all`}
-                    >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteReflection(reflection.id);
-                        }}
-                        className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors z-10"
-                        title="Delete"
-                      >
-                        <X size={16} className="text-gray-500" />
-                      </button>
-                      <div className="pr-6">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`text-xs font-semibold ${typeStyle.titleColor} uppercase tracking-wide`}>
-                            {typeStyle.title}
-                          </span>
-                        </div>
-                        <h3 className="font-semibold text-gray-800 text-sm mb-1">
-                          {reflection.title || reflection.topic}
-                        </h3>
-                      </div>
-                      {isExpanded && (
-                        <div className="mt-3 pt-3 border-t border-gray-200">
-                          <p className="text-sm text-gray-700 leading-relaxed">
-                            {reflection.content}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <button
+              onClick={() => {
+                setIsReflectionSidebarOpen(false);
+                setFocusedReflection(null);
+              }}
+              className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title="Close Reflections"
+            >
+              <ChevronRight size={20} className="text-gray-500" />
+            </button>
           </div>
-        )}
+
+          {reflections.length === 0 ? (
+            <div className="text-center text-gray-400 mt-8">
+              <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Generate ideas to see reflections here</p>
+            </div>
+          ) : (
+            <div className="space-y-3 pb-96">
+              {reflections.map(reflection => {
+                const isExpanded = expandedReflectionId === reflection.id;
+
+                // Get color scheme and icon based on type
+                const getTypeStyle = (type) => {
+                  switch (type) {
+                    case 'critic':
+                      return {
+                        bg: 'bg-blue-50',
+                        border: 'border-blue-100',
+                        title: 'Focus Area',
+                        titleColor: 'text-blue-800',
+                        icon: Sparkles,
+                        iconColor: 'text-blue-600'
+                      };
+                    case 'advice':
+                      return {
+                        bg: 'bg-purple-50',
+                        border: 'border-purple-100',
+                        title: 'Suggestion',
+                        titleColor: 'text-purple-800',
+                        icon: ArrowRight,
+                        iconColor: 'text-purple-600'
+                      };
+                    default:
+                      return {
+                        bg: 'bg-green-50',
+                        border: 'border-green-100',
+                        title: 'Pattern',
+                        titleColor: 'text-green-800',
+                        icon: Zap,
+                        iconColor: 'text-green-600'
+                      };
+                  }
+                };
+
+                const typeStyle = getTypeStyle(reflection.type);
+                const IconComponent = typeStyle.icon;
+                const isFocused = focusedReflection === reflection.id;
+
+                return (
+                  <div
+                    key={reflection.id}
+                    onClick={() => handleReflectionClick(reflection.id, reflection.nodeId)}
+                    className={`${typeStyle.bg} rounded-lg p-4 shadow-sm border ${isFocused ? 'border-2 border-blue-400 shadow-lg ring-2 ring-blue-200' : typeStyle.border} relative cursor-pointer hover:shadow-md transition-all`}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteReflection(reflection.id);
+                      }}
+                      className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors z-10"
+                      title="Delete"
+                    >
+                      <X size={16} className="text-gray-500" />
+                    </button>
+                    <div className="flex items-start gap-3 pr-6">
+                      <div className={`${typeStyle.iconColor} flex-shrink-0 mt-0.5`}>
+                        <IconComponent size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className={`text-base font-bold ${typeStyle.titleColor} mb-2`}>
+                          {typeStyle.title}
+                        </h3>
+                        <p className="text-sm text-gray-700 leading-relaxed">
+                          {reflection.title || reflection.topic || reflection.content}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
