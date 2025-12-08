@@ -5764,7 +5764,7 @@ Note:
                                 >
                                   {/* Title - 선택되지 않은 노드는 말줄임표, 선택된 노드는 전체 title 표시 */}
                                   <p
-                                    className={`break-words leading-tight font-semibold ${node.type === 'topic' ? 'text-sm text-[#666666] uppercase' : 'text-gray-700'} ${node.type === 'main' ? 'text-xs' : node.type === 'sub' ? 'text-xs' : 'text-xs'}`}
+                                    className={`break-words leading-tight font-semibold ${node.type === 'topic' ? 'text-sm uppercase' : (nodeCreationType === 'ai' || nodeCreationType === 'human' || nodeCreationType === 'co-creation') ? '' : 'text-gray-700'} ${node.type === 'main' ? 'text-xs' : node.type === 'sub' ? 'text-xs' : 'text-xs'}`}
                                     style={{
                                       maxWidth: '100%',
                                       overflow: isSelected ? 'visible' : 'hidden',
@@ -5772,7 +5772,18 @@ Note:
                                       display: isSelected ? 'block' : '-webkit-box',
                                       WebkitLineClamp: isSelected ? undefined : 2,
                                       WebkitBoxOrient: isSelected ? 'initial' : 'vertical',
-                                      wordBreak: 'break-word'
+                                      wordBreak: 'break-word',
+                                      ...(nodeCreationType === 'co-creation' ? {
+                                        background: 'linear-gradient(to right, #AD46FF 0%, #F6339A 50%, #FF6900 100%)',
+                                        WebkitBackgroundClip: 'text',
+                                        WebkitTextFillColor: 'transparent',
+                                        backgroundClip: 'text'
+                                      } : {
+                                        color: node.type === 'topic' ? '#000000'
+                                          : nodeCreationType === 'ai' ? '#FF6900'
+                                            : nodeCreationType === 'human' ? '#9810FA'
+                                              : undefined
+                                      })
                                     }}
                                     title={!isSelected ? (node.title || node.text) : undefined}
                                   >
