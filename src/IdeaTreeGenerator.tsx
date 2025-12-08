@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus, BarChart } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus, BarChart, TrendingUp, TrendingDown } from 'lucide-react';
 
 // API URL: Use environment variable or fallback to localhost for development
 // In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
@@ -569,7 +569,8 @@ export default function IdeaTreeGenerator() {
       scores.semantic_reframing_score +
       scores.semantic_evaluation_score +
       scores.semantic_constraint_score +
-      scores.semantic_domain_score;
+      scores.semantic_domain_score +
+      scores.semantic_input_score; // Include input quality score
 
     return {
       ...scores,
@@ -786,21 +787,27 @@ export default function IdeaTreeGenerator() {
       setTopicNodeId(topicNodeId);
 
       // Track Initial Input event
-      trackEvent('Initial Input', 'HUMAN', {
+      const initialInputEvent = trackEvent('Initial Input', 'HUMAN', {
         raw_content: topicText,
         node_id: topicNodeId.toString()
       });
 
       // Initialize Creative Flow Timeline with Human 100%, Dependency 0%
       // This represents the initial human input starting the creative process
-      // Note: trackEvent is called before this, so eventHistory.length will be 1
+      // Calculate scores directly from the initial event since eventHistory state hasn't updated yet
+      const humanScoreTotal = (initialInputEvent as any).semantic_total_score || 0;
+      const aiScoreTotal = 0;
+      const totalScore = humanScoreTotal + aiScoreTotal;
+      const creativity = totalScore > 0 ? humanScoreTotal / totalScore : 1.0; // Default to 1.0 if no score yet
+      const dependency = totalScore > 0 ? aiScoreTotal / totalScore : 0.0;
+
       setCreativityHistory([{
-        creativity: 1.0,
-        dependency: 0.0,
-        human_score_total: 0,
-        ai_score_total: 0,
-        curve_human_ratio: 1.0,
-        curve_ai_ratio: 0.0,
+        creativity: creativity,
+        dependency: dependency,
+        human_score_total: humanScoreTotal,
+        ai_score_total: aiScoreTotal,
+        curve_human_ratio: creativity,
+        curve_ai_ratio: dependency,
         event_history_length: 1 // Initial Input event
       }]);
 
@@ -956,12 +963,13 @@ Note:
 
       // Track Create Node event as a batch (all nodes together)
       // This allows proper calculation of node_count and blending scores
+      let aiCreateEvent = null;
       if (newNodes.length > 0) {
         const nodeIds = newNodes.map(n => n.id.toString());
         const combinedContent = newNodes.map(n => n.text).join(' ');
         const avgContentLength = combinedContent.length / newNodes.length;
 
-        trackEvent('Create Node', 'AI', {
+        aiCreateEvent = trackEvent('Create Node', 'AI', {
           node_id: nodeIds[0], // First node ID
           node_ids_involved: nodeIds, // All node IDs for blending calculation
           new_content: combinedContent, // Combined content for analysis
@@ -971,7 +979,33 @@ Note:
         });
       }
 
-      const newMetrics = calculateCreativityIndex();
+      // Calculate metrics directly from current eventHistory + the new event
+      // Since trackEvent updates eventHistory asynchronously, we need to include the returned event
+      const allEvents = [...eventHistory];
+      if (aiCreateEvent) {
+        allEvents.push(aiCreateEvent);
+      }
+
+      const humanEvents = allEvents.filter(e => e.actor === 'HUMAN');
+      const aiEvents = allEvents.filter(e => e.actor === 'AI');
+
+      const humanScoreTotal = humanEvents.reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+      const aiScoreTotal = aiEvents.reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+      const totalScore = humanScoreTotal + aiScoreTotal;
+
+      const creativity = totalScore > 0 ? humanScoreTotal / totalScore : 0;
+      const dependency = totalScore > 0 ? aiScoreTotal / totalScore : 0;
+
+      const newMetrics = {
+        creativity: Math.max(0, Math.min(1, creativity)),
+        dependency: Math.max(0, Math.min(1, dependency)),
+        human_score_total: humanScoreTotal,
+        ai_score_total: aiScoreTotal,
+        curve_human_ratio: creativity,
+        curve_ai_ratio: dependency,
+        event_history_length: allEvents.length
+      };
+
       setCreativityHistory(prev => [...prev, newMetrics]);
     } catch (err) {
       console.error('Step 1 generation error:', err);
@@ -2061,41 +2095,87 @@ Respond ONLY in JSON format:
 
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleanText);
+
+      let parsed;
+      try {
+        parsed = JSON.parse(cleanText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Response text:', cleanText);
+        alert('Failed to parse API response. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Validate parsed structure
+      if (!parsed.decisions || !Array.isArray(parsed.decisions)) {
+        console.error('Invalid response structure:', parsed);
+        alert('Invalid response format from API. Please try again.');
+        setLoading(false);
+        return;
+      }
 
       // Process each decision and generate nodes
       // Collect all generated nodes to link them to all selected nodes
       const allGeneratedNodes = [];
 
       for (const decision of parsed.decisions) {
-        const targetNode = selectedNodesList[decision.selectedNodeIndex - 1];
-        if (!targetNode) continue;
+        try {
+          const targetNode = selectedNodesList[decision.selectedNodeIndex - 1];
+          if (!targetNode) {
+            console.warn(`Target node not found for index ${decision.selectedNodeIndex}`);
+            continue;
+          }
 
-        let generatedNodes = [];
+          let generatedNodes = [];
 
-        // Generate based on decision - use appropriate function
-        if (decision.nodeType === 'main') {
-          // Generate new main node
-          const newNode = await generateMainNodeFromMulti(decision.category || 'Context');
-          if (newNode) generatedNodes = [newNode];
-        } else if (decision.nodeType === 'sub') {
-          // Check if targetNode can have sub-nodes (main node)
-          if (targetNode.type === 'main') {
-            generatedNodes = await generateStep2SubNodesForMulti(targetNode);
+          // Generate based on decision - use appropriate function
+          if (decision.nodeType === 'main') {
+            // Generate new main node
+            try {
+              const newNode = await generateMainNodeFromMulti(decision.category || 'Context');
+              if (newNode) generatedNodes = [newNode];
+            } catch (err) {
+              console.error('Error generating main node:', err);
+              // Continue with other decisions even if one fails
+            }
+          } else if (decision.nodeType === 'sub') {
+            // Check if targetNode can have sub-nodes (main node)
+            if (targetNode.type === 'main') {
+              try {
+                generatedNodes = await generateStep2SubNodesForMulti(targetNode);
+              } catch (err) {
+                console.error('Error generating sub nodes:', err);
+                // Continue with other decisions even if one fails
+              }
+            }
+          } else if (decision.nodeType === 'insight') {
+            // Check if targetNode can have insights (main node or sub node)
+            if (targetNode.type === 'main' || targetNode.type === 'sub') {
+              try {
+                generatedNodes = await generateStep3InsightsForMulti(targetNode);
+              } catch (err) {
+                console.error('Error generating insights:', err);
+                // Continue with other decisions even if one fails
+              }
+            }
+          } else if (decision.nodeType === 'opportunity') {
+            // Check if targetNode can have opportunities (insight)
+            if (targetNode.type === 'insight') {
+              try {
+                generatedNodes = await generateStep4OpportunitiesForMulti(targetNode);
+              } catch (err) {
+                console.error('Error generating opportunities:', err);
+                // Continue with other decisions even if one fails
+              }
+            }
           }
-        } else if (decision.nodeType === 'insight') {
-          // Check if targetNode can have insights (main node or sub node)
-          if (targetNode.type === 'main' || targetNode.type === 'sub') {
-            generatedNodes = await generateStep3InsightsForMulti(targetNode);
-          }
-        } else if (decision.nodeType === 'opportunity') {
-          // Check if targetNode can have opportunities (insight)
-          if (targetNode.type === 'insight') {
-            generatedNodes = await generateStep4OpportunitiesForMulti(targetNode);
-          }
+
+          allGeneratedNodes.push(...generatedNodes);
+        } catch (err) {
+          console.error('Error processing decision:', decision, err);
+          // Continue with other decisions even if one fails
         }
-
-        allGeneratedNodes.push(...generatedNodes);
       }
 
       // Link all generated nodes to all selected nodes (if multiple selected)
@@ -2460,8 +2540,11 @@ Note:
       await Promise.all(generationPromises);
 
       // Update Creative Flow Timeline only once after all nodes are generated
-      const newMetrics = calculateCreativityIndex();
-      setCreativityHistory(prev => [...prev, newMetrics]);
+      // Use setTimeout to ensure eventHistory state is updated after all trackEvent calls
+      setTimeout(() => {
+        const newMetrics = calculateCreativityIndex();
+        setCreativityHistory(prev => [...prev, newMetrics]);
+      }, 100);
     } catch (err) {
       console.error('Expand all error:', err);
       alert('An error occurred while expanding nodes.');
@@ -3661,9 +3744,21 @@ Note:
             {creativityHistory.length > 0 && (
               <div className="mt-auto pt-4">
                 <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-4">
-                  <div className="mb-3">
-                    <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
-                    <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
+                      <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCurrentPage('tracking');
+                      }}
+                      className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
+                      title="View Details"
+                    >
+                      <Maximize2 size={18} />
+                    </button>
                   </div>
 
                   <div className="relative h-32 rounded-lg mb-3 overflow-hidden">
@@ -3789,28 +3884,16 @@ Note:
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-1 rounded" style={{ backgroundColor: '#8b5cf6' }}></div>
-                        <span className="text-xs text-gray-700">Creativity</span>
+                        <span className="text-xs text-gray-700">Human</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-1 bg-orange-500 rounded"></div>
-                        <span className="text-xs text-gray-700">Dependency</span>
+                        <span className="text-xs text-gray-700">Ai</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                        <span style={{ color: '#8b5cf6' }}>↑</span>
-                        <span>{Math.round(currentCreativity * 100)}%</span>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCurrentPage('tracking');
-                        }}
-                        className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
-                        title="View Details"
-                      >
-                        <Maximize2 size={18} />
-                      </button>
+                    <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
+                      <TrendingUp size={14} className="text-[#8b5cf6]" />
+                      <span>{Math.round(currentCreativity * 100)}%</span>
                     </div>
                   </div>
                 </div>
@@ -3947,7 +4030,7 @@ Note:
                 <div className="grid grid-cols-2 gap-6">
                   {/* Left: Co-Creative Competence Distribution - Radar Chart */}
                   <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-800 mb-8">Co-Creative Competence Distribution</h3>
+                    <h3 className="text-lg font-bold text-gray-800 mb-8">Your Co-Creation Skill Map</h3>
                     <div className="flex items-center justify-center overflow-visible my-8">
                       <svg width="400" height="400" viewBox="0 0 400 400" style={{ overflow: 'visible' }}>
                         {/* Grid circles */}
@@ -4162,750 +4245,786 @@ Note:
                 </div>
 
                 {/* Creative Flow Timeline Graph - Large version for Process tab */}
-                <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
-                  <div className="mb-4">
-                    <h3 className="text-xl font-bold text-gray-800 mb-2">Creative Flow Timeline</h3>
-                    <p className="text-sm text-gray-600">Track your creativity and dependency scores over time</p>
-                  </div>
-                  <div className="border-t border-gray-200 pt-4">
-                    {/* Mode labels - above graph */}
+                <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200 mt-6">
+                  <div className="relative h-[400px] w-full rounded-lg overflow-hidden">
+                    {/* Mode labels - inside graph at top */}
                     {(() => {
                       const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
                       const pointCount = creativityHistory.length;
                       const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
                       const getXPosition = (index) => {
-                        if (pointCount === 0) return 100;
-                        if (pointCount === 1) return 100;
+                        if (pointCount === 0) return 150;
+                        if (pointCount === 1) return 150;
                         const minX = 0;
-                        const maxX = 200;
+                        const maxX = 300;
                         return minX + (index / (pointCount - 1)) * (maxX - minX);
                       };
                       const modeDivisionX = hasStructureMode && pointCount > 1
                         ? getXPosition(structureModeStartIndex)
                         : null;
-
-                      // Calculate percentage for positioning
-                      const modeDivisionPercent = modeDivisionX !== null ? (modeDivisionX / 200) * 100 : 0;
+                      const modeDivisionPercent = modeDivisionX !== null ? (modeDivisionX / 300) * 100 : 100;
 
                       return (
-                        <div className="relative mb-2 h-6">
+                        <div className="absolute top-2 left-0 right-0 z-10 pointer-events-none">
                           {hasStructureMode && modeDivisionX !== null ? (
                             <>
-                              <div className="absolute left-0 flex items-center gap-2" style={{ width: `${modeDivisionPercent}%` }}>
-                                <div className="w-4 h-4 rounded bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
-                                  <svg className="w-3 h-3 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                  </svg>
+                              <div className="absolute left-2 flex items-center justify-center gap-2" style={{ width: `calc(${modeDivisionPercent}% - 4px)` }}>
+                                <div className="bg-purple-100 rounded-lg px-2 py-1 flex items-center gap-1.5 border border-purple-200">
+                                  <Lightbulb size={14} className="text-purple-600" />
+                                  <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
                                 </div>
-                                <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
                               </div>
-                              <div className="absolute right-0 flex items-center gap-2 justify-end" style={{ width: `${100 - modeDivisionPercent}%` }}>
-                                <span className="text-xs font-semibold text-orange-600">Structure Mode</span>
-                                <div className="w-4 h-4 rounded bg-orange-500/20 border border-orange-500/40 flex items-center justify-center">
-                                  <svg className="w-3 h-3 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                                  </svg>
+                              <div className="absolute right-2 flex items-center justify-center gap-2" style={{ width: `calc(${100 - modeDivisionPercent}% - 4px)` }}>
+                                <div className="bg-orange-100 rounded-lg px-2 py-1 flex items-center gap-1.5 border border-orange-200">
+                                  <span className="text-xs font-semibold text-orange-600">Structure Mode</span>
+                                  <LayoutGrid size={14} className="text-orange-600" />
                                 </div>
                               </div>
                             </>
                           ) : (
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
-                                <svg className="w-3 h-3 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                </svg>
+                            <div className="absolute left-2 flex items-center gap-2">
+                              <div className="bg-purple-100 rounded-lg px-2 py-1 flex items-center gap-1.5 border border-purple-200">
+                                <Lightbulb size={14} className="text-purple-600" />
+                                <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
                               </div>
-                              <span className="text-xs font-semibold text-purple-600">Exploration Mode</span>
                             </div>
                           )}
                         </div>
                       );
                     })()}
 
-                    <div className="relative h-[400px] bg-gray-50 rounded-lg overflow-hidden">
-                      {/* Y-axis label - outside graph */}
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-12 transform -rotate-90 origin-center">
-                        <span className="text-xs font-medium text-gray-600">Score (%)</span>
-                      </div>
 
-                      {/* Tooltip */}
-                      {hoveredPointIndex !== null && (() => {
-                        // Calculate semantic scores up to this point
-                        // Use the eventHistory length stored in creativityHistory to get the correct events
-                        const metrics = creativityHistory[hoveredPointIndex];
-                        const eventHistoryLengthAtPoint = typeof metrics === 'object' && metrics.event_history_length !== undefined
-                          ? metrics.event_history_length
-                          : eventHistory.length; // Fallback to current length if not stored
-                        const pointEvents = eventHistory.slice(0, eventHistoryLengthAtPoint);
-                        const calculateSemanticScores = (actor) => {
-                          const events = pointEvents.filter(e => e.actor === actor);
-                          if (events.length === 0) {
-                            return {
-                              reframing: 0,
-                              conceptualBlending: 0,
-                              domainKnowledge: 0,
-                              evaluation: 0,
-                              constraintSetting: 0,
-                              generationExpansion: 0
-                            };
-                          }
+                    {/* Y-axis label - outside graph */}
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-10 transform -rotate-90 origin-center">
+                      <span className="text-xs font-medium text-gray-600">Score (%)</span>
+                    </div>
 
-                          // Aggregate scores from events (each event can have 0-3 points per dimension)
-                          const totalReframing = events.reduce((sum, e) => sum + ((e as any).semantic_reframing_score || 0), 0);
-                          const totalBlending = events.reduce((sum, e) => sum + ((e as any).semantic_blending_score || 0), 0);
-                          const totalDomain = events.reduce((sum, e) => sum + ((e as any).semantic_domain_score || 0), 0);
-                          const totalEvaluation = events.reduce((sum, e) => sum + ((e as any).semantic_evaluation_score || 0), 0);
-                          const totalConstraint = events.reduce((sum, e) => sum + ((e as any).semantic_constraint_score || 0), 0);
-                          const totalGenerative = events.reduce((sum, e) => sum + ((e as any).semantic_generative_score || 0), 0);
-
-                          // Normalize: Use average score per event (max 3 per event), then normalize to 0-1
-                          // This gives more meaningful scores even with few events (same as Co-Creative Competence Distribution)
-                          const avgReframing = events.length > 0 ? totalReframing / events.length : 0;
-                          const avgBlending = events.length > 0 ? totalBlending / events.length : 0;
-                          const avgDomain = events.length > 0 ? totalDomain / events.length : 0;
-                          const avgEvaluation = events.length > 0 ? totalEvaluation / events.length : 0;
-                          const avgConstraint = events.length > 0 ? totalConstraint / events.length : 0;
-                          const avgGenerative = events.length > 0 ? totalGenerative / events.length : 0;
-
+                    {/* Tooltip */}
+                    {hoveredPointIndex !== null && (() => {
+                      // Calculate semantic scores up to this point
+                      // Use the eventHistory length stored in creativityHistory to get the correct events
+                      const metrics = creativityHistory[hoveredPointIndex];
+                      const eventHistoryLengthAtPoint = typeof metrics === 'object' && metrics.event_history_length !== undefined
+                        ? metrics.event_history_length
+                        : eventHistory.length; // Fallback to current length if not stored
+                      const pointEvents = eventHistory.slice(0, eventHistoryLengthAtPoint);
+                      const calculateSemanticScores = (actor) => {
+                        const events = pointEvents.filter(e => e.actor === actor);
+                        if (events.length === 0) {
                           return {
-                            reframing: Math.min(avgReframing / 3, 1), // Normalize: avg score (0-3) / 3 = 0-1
-                            conceptualBlending: Math.min(avgBlending / 3, 1),
-                            domainKnowledge: Math.min(avgDomain / 3, 1),
-                            evaluation: Math.min(avgEvaluation / 3, 1),
-                            constraintSetting: Math.min(avgConstraint / 3, 1),
-                            generationExpansion: Math.min(avgGenerative / 3, 1)
+                            reframing: 0,
+                            conceptualBlending: 0,
+                            domainKnowledge: 0,
+                            evaluation: 0,
+                            constraintSetting: 0,
+                            generationExpansion: 0
                           };
+                        }
+
+                        // Aggregate scores from events (each event can have 0-3 points per dimension)
+                        const totalReframing = events.reduce((sum, e) => sum + ((e as any).semantic_reframing_score || 0), 0);
+                        const totalBlending = events.reduce((sum, e) => sum + ((e as any).semantic_blending_score || 0), 0);
+                        const totalDomain = events.reduce((sum, e) => sum + ((e as any).semantic_domain_score || 0), 0);
+                        const totalEvaluation = events.reduce((sum, e) => sum + ((e as any).semantic_evaluation_score || 0), 0);
+                        const totalConstraint = events.reduce((sum, e) => sum + ((e as any).semantic_constraint_score || 0), 0);
+                        const totalGenerative = events.reduce((sum, e) => sum + ((e as any).semantic_generative_score || 0), 0);
+
+                        // Normalize: Use average score per event (max 3 per event), then normalize to 0-1
+                        // This gives more meaningful scores even with few events (same as Co-Creative Competence Distribution)
+                        const avgReframing = events.length > 0 ? totalReframing / events.length : 0;
+                        const avgBlending = events.length > 0 ? totalBlending / events.length : 0;
+                        const avgDomain = events.length > 0 ? totalDomain / events.length : 0;
+                        const avgEvaluation = events.length > 0 ? totalEvaluation / events.length : 0;
+                        const avgConstraint = events.length > 0 ? totalConstraint / events.length : 0;
+                        const avgGenerative = events.length > 0 ? totalGenerative / events.length : 0;
+
+                        return {
+                          reframing: Math.min(avgReframing / 3, 1), // Normalize: avg score (0-3) / 3 = 0-1
+                          conceptualBlending: Math.min(avgBlending / 3, 1),
+                          domainKnowledge: Math.min(avgDomain / 3, 1),
+                          evaluation: Math.min(avgEvaluation / 3, 1),
+                          constraintSetting: Math.min(avgConstraint / 3, 1),
+                          generationExpansion: Math.min(avgGenerative / 3, 1)
                         };
-                        const aiScores = calculateSemanticScores('AI');
-                        const humanScores = calculateSemanticScores('HUMAN');
-                        // metrics already defined above
-                        const humanRatio = typeof metrics === 'object' ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0) : 0;
-                        const aiRatio = typeof metrics === 'object' ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0) : 0;
-                        const aiScoreTotal = typeof metrics === 'object' ? (metrics.ai_score_total ?? 0) : 0;
-                        const humanScoreTotal = typeof metrics === 'object' ? (metrics.human_score_total ?? 0) : 0;
-                        const totalScore = aiScoreTotal + humanScoreTotal;
-                        // Calculate tooltip position to stay within bounds
-                        const tooltipWidth = 280;
-                        const tooltipHeight = 200;
-                        const containerHeight = 400;
-                        const margin = 10;
+                      };
+                      const aiScores = calculateSemanticScores('AI');
+                      const humanScores = calculateSemanticScores('HUMAN');
+                      // metrics already defined above
+                      const humanRatio = typeof metrics === 'object' ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0) : 0;
+                      const aiRatio = typeof metrics === 'object' ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0) : 0;
+                      // Calculate Total Score from pointEvents to match the detailed scores
+                      const humanScoreTotal = pointEvents
+                        .filter(e => e.actor === 'HUMAN')
+                        .reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+                      const aiScoreTotal = pointEvents
+                        .filter(e => e.actor === 'AI')
+                        .reduce((sum, e) => sum + ((e as any).semantic_total_score || 0), 0);
+                      const totalScore = aiScoreTotal + humanScoreTotal;
+                      // Calculate tooltip position to stay within bounds
+                      const tooltipWidth = 280;
+                      const tooltipHeight = 200;
+                      const containerHeight = 400;
+                      const margin = 10;
 
-                        // Check if tooltip should be above or below the point
-                        const showAbove = tooltipPosition.y > tooltipHeight + margin + 20;
+                      // Check if tooltip should be above or below the point
+                      const showAbove = tooltipPosition.y > tooltipHeight + margin + 20;
 
-                        // Get container width for X position calculation
-                        const containerElement = document.querySelector('.relative.h-\\[400px\\]');
-                        const containerWidth = containerElement?.getBoundingClientRect().width || 800;
+                      // Get container width for X position calculation
+                      const containerElement = document.querySelector('.relative.h-\\[400px\\]');
+                      const containerWidth = containerElement?.getBoundingClientRect().width || 800;
 
-                        // Calculate X position (clamp to container bounds)
-                        const tooltipLeft = tooltipPosition.x - tooltipWidth / 2;
-                        const tooltipRight = tooltipPosition.x + tooltipWidth / 2;
-                        let xPos = tooltipPosition.x;
-                        if (tooltipLeft < margin) {
-                          xPos = tooltipWidth / 2 + margin;
-                        } else if (tooltipRight > containerWidth - margin) {
-                          xPos = containerWidth - tooltipWidth / 2 - margin;
-                        }
+                      // Calculate X position (clamp to container bounds)
+                      const tooltipLeft = tooltipPosition.x - tooltipWidth / 2;
+                      const tooltipRight = tooltipPosition.x + tooltipWidth / 2;
+                      let xPos = tooltipPosition.x;
+                      if (tooltipLeft < margin) {
+                        xPos = tooltipWidth / 2 + margin;
+                      } else if (tooltipRight > containerWidth - margin) {
+                        xPos = containerWidth - tooltipWidth / 2 - margin;
+                      }
 
-                        // Calculate Y position
-                        const yPos = showAbove
-                          ? Math.max(margin, tooltipPosition.y - tooltipHeight - margin)
-                          : Math.min(tooltipPosition.y + 20, containerHeight - tooltipHeight - margin);
+                      // Calculate Y position
+                      const yPos = showAbove
+                        ? Math.max(margin, tooltipPosition.y - tooltipHeight - margin)
+                        : Math.min(tooltipPosition.y + 20, containerHeight - tooltipHeight - margin);
 
-                        // Show different tooltip based on hovered line type
-                        if (hoveredLineType === 'human') {
-                          return (
-                            <div
-                              className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
-                              style={{
-                                left: `${xPos}px`,
-                                top: `${yPos}px`,
-                                transform: 'translateX(-50%)',
-                                maxWidth: '280px',
-                                width: '280px'
-                              }}
-                            >
-                              <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)', borderRadius: '14px' }}>
-                                    <User size={16} className="text-purple-600" />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="text-xs text-gray-600 mb-2">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-semibold text-purple-600 w-24">Ratio:</span>
-                                  <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-purple-600 w-24">Total Human Score:</span>
-                                  <span>{humanScoreTotal.toFixed(1)}</span>
-                                </div>
-                              </div>
-                              <div className="text-xs text-gray-600 mb-2">
-                                <span className="font-semibold">Framework Name:</span>
-                                <span className="ml-2">Co-Creative Competence</span>
-                              </div>
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Generative Expansion:</span>
-                                    <span className="ml-2">{(humanScores.generationExpansion * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Conceptual Blending:</span>
-                                    <span className="ml-2">{(humanScores.conceptualBlending * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Constraint Setting:</span>
-                                    <span className="ml-2">{(humanScores.constraintSetting * 100).toFixed(0)}%</span>
-                                  </div>
-                                </div>
-                                <div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Reframing:</span>
-                                    <span className="ml-2">{(humanScores.reframing * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Evaluation:</span>
-                                    <span className="ml-2">{(humanScores.evaluation * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Domain Knowledge:</span>
-                                    <span className="ml-2">{(humanScores.domainKnowledge * 100).toFixed(0)}%</span>
-                                  </div>
+                      // Show different tooltip based on hovered line type
+                      if (hoveredLineType === 'human') {
+                        return (
+                          <div
+                            className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
+                            style={{
+                              left: `${xPos}px`,
+                              top: `${yPos}px`,
+                              transform: 'translateX(-50%)',
+                              maxWidth: '280px',
+                              width: '280px'
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)', borderRadius: '14px' }}>
+                                  <User size={16} className="text-purple-600" />
                                 </div>
                               </div>
                             </div>
-                          );
-                        } else {
-                          // AI tooltip (existing)
-                          return (
-                            <div
-                              className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
-                              style={{
-                                left: `${xPos}px`,
-                                top: `${yPos}px`,
-                                transform: 'translateX(-50%)',
-                                maxWidth: '280px',
-                                width: '280px'
-                              }}
-                            >
-                              <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
-                                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                                    </svg>
-                                  </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-semibold text-purple-600 w-24">Ratio:</span>
+                                <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-purple-600 w-24">Total Human Score:</span>
+                                <span>{humanScoreTotal.toFixed(1)}</span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Generative Expansion:</span>
+                                  <span className="ml-2">{(humanScores.generationExpansion * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Conceptual Blending:</span>
+                                  <span className="ml-2">{(humanScores.conceptualBlending * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Constraint Setting:</span>
+                                  <span className="ml-2">{(humanScores.constraintSetting * 3).toFixed(1)}</span>
                                 </div>
                               </div>
-                              <div className="text-xs text-gray-600 mb-2">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-semibold text-orange-600 w-24">Ratio:</span>
-                                  <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                              <div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Reframing:</span>
+                                  <span className="ml-2">{(humanScores.reframing * 3).toFixed(1)}</span>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-orange-600 w-24">Total AI Score:</span>
-                                  <span>{aiScoreTotal.toFixed(1)}</span>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Evaluation:</span>
+                                  <span className="ml-2">{(humanScores.evaluation * 3).toFixed(1)}</span>
                                 </div>
-                              </div>
-                              <div className="text-xs text-gray-600 mb-2">
-                                <span className="font-semibold">Framework Name:</span>
-                                <span className="ml-2">Co-Creative Competence</span>
-                              </div>
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Generation Expansion:</span>
-                                    <span className="ml-2">{(aiScores.generationExpansion * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Conceptual Blending:</span>
-                                    <span className="ml-2">{(aiScores.conceptualBlending * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Constraint Setting:</span>
-                                    <span className="ml-2">{(aiScores.constraintSetting * 100).toFixed(0)}%</span>
-                                  </div>
-                                </div>
-                                <div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Reframing:</span>
-                                    <span className="ml-2">{(aiScores.reframing * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Evaluation:</span>
-                                    <span className="ml-2">{(aiScores.evaluation * 100).toFixed(0)}%</span>
-                                  </div>
-                                  <div className="text-gray-700 flex justify-between">
-                                    <span>Domain Knowledge:</span>
-                                    <span className="ml-2">{(aiScores.domainKnowledge * 100).toFixed(0)}%</span>
-                                  </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Domain Knowledge:</span>
+                                  <span className="ml-2">{(humanScores.domainKnowledge * 3).toFixed(1)}</span>
                                 </div>
                               </div>
                             </div>
-                          );
-                        }
+                          </div>
+                        );
+                      } else {
+                        // AI tooltip (existing)
+                        return (
+                          <div
+                            className="absolute bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 pointer-events-none"
+                            style={{
+                              left: `${xPos}px`,
+                              top: `${yPos}px`,
+                              transform: 'translateX(-50%)',
+                              maxWidth: '280px',
+                              width: '280px'
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600 mb-2">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-semibold text-orange-600 w-24">Ratio:</span>
+                                <span>Human: {(humanRatio * 100).toFixed(0)}% / AI: {(aiRatio * 100).toFixed(0)}%</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-orange-600 w-24">Total AI Score:</span>
+                                <span>{aiScoreTotal.toFixed(1)}</span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Generation Expansion:</span>
+                                  <span className="ml-2">{(aiScores.generationExpansion * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Conceptual Blending:</span>
+                                  <span className="ml-2">{(aiScores.conceptualBlending * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Constraint Setting:</span>
+                                  <span className="ml-2">{(aiScores.constraintSetting * 3).toFixed(1)}</span>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Reframing:</span>
+                                  <span className="ml-2">{(aiScores.reframing * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Evaluation:</span>
+                                  <span className="ml-2">{(aiScores.evaluation * 3).toFixed(1)}</span>
+                                </div>
+                                <div className="text-gray-700 flex justify-between">
+                                  <span>Domain Knowledge:</span>
+                                  <span className="ml-2">{(aiScores.domainKnowledge * 3).toFixed(1)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                    })()}
+
+                    <svg className="w-full h-full" viewBox="-20 0 320 100" preserveAspectRatio="xMidYMid meet">
+                      {/* Background gradients */}
+                      <defs>
+                        {/* Gradient for Exploration Mode (purple) */}
+                        <linearGradient id="explorationGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.15" />
+                          <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
+                        </linearGradient>
+                        {/* Gradient for Structure Mode (orange) */}
+                        <linearGradient id="structureGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#f97316" stopOpacity="0.15" />
+                          <stop offset="100%" stopColor="#f97316" stopOpacity="0.05" />
+                        </linearGradient>
+                        {/* Gradient for Human area (for area fills) */}
+                        <linearGradient id="humanGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
+                        </linearGradient>
+                        {/* Gradient for AI area (for area fills) */}
+                        <linearGradient id="aiGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#f97316" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="#f97316" stopOpacity="0.05" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Mode background gradients - drawn in SVG to match division line */}
+                      {(() => {
+                        const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+                        const pointCount = creativityHistory.length;
+                        const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
+                        const getXPosition = (index) => {
+                          if (pointCount === 0) return 150;
+                          if (pointCount === 1) return 150;
+                          const minX = 0;
+                          const maxX = 300;
+                          return minX + (index / (pointCount - 1)) * (maxX - minX);
+                        };
+                        const modeDivisionX = hasStructureMode && pointCount > 1
+                          ? getXPosition(structureModeStartIndex)
+                          : null;
+
+                        return (
+                          <>
+                            {/* Exploration Mode background (purple gradient) */}
+                            <rect
+                              x="0"
+                              y="0"
+                              width={modeDivisionX !== null ? modeDivisionX : 300}
+                              height="100"
+                              fill="url(#explorationGradient)"
+                              rx="4"
+                              ry="4"
+                            />
+                            {/* Structure Mode background (orange gradient) */}
+                            {hasStructureMode && modeDivisionX !== null && (
+                              <rect
+                                x={modeDivisionX}
+                                y="0"
+                                width={300 - modeDivisionX}
+                                height="100"
+                                fill="url(#structureGradient)"
+                                rx="4"
+                                ry="4"
+                              />
+                            )}
+                          </>
+                        );
                       })()}
 
-                      <svg className="w-full h-full" viewBox="-25 0 325 100" preserveAspectRatio="xMidYMid meet">
-                        {/* Background gradients */}
-                        <defs>
-                          {/* Gradient for Human area */}
-                          <linearGradient id="humanGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
-                            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
-                          </linearGradient>
-                          {/* Gradient for AI area */}
-                          <linearGradient id="aiGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#f97316" stopOpacity="0.3" />
-                            <stop offset="100%" stopColor="#f97316" stopOpacity="0.05" />
-                          </linearGradient>
-                        </defs>
-                        <rect x="0" y="0" width="300" height="100" fill="transparent" />
+                      {/* Calculate X positions to fill the box */}
+                      {(() => {
+                        const pointCount = creativityHistory.length;
+                        const getXPosition = (index) => {
+                          if (pointCount === 0) return 150;
+                          if (pointCount === 1) return 150;
+                          const minX = 0;
+                          const maxX = 300;
+                          return minX + (index / (pointCount - 1)) * (maxX - minX);
+                        };
 
-                        {/* Calculate X positions to fill the box */}
-                        {(() => {
-                          const pointCount = creativityHistory.length;
-                          const getXPosition = (index) => {
-                            if (pointCount === 0) return 150;
-                            if (pointCount === 1) return 150;
-                            const minX = 0;
-                            const maxX = 300;
-                            return minX + (index / (pointCount - 1)) * (maxX - minX);
-                          };
+                        // Determine Structure Mode start index
+                        const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
+                        const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
 
-                          // Determine Structure Mode start index
-                          const structureModeStartIndex = hierarchyAnalysis?.structureModeStartIndex ?? null;
-                          const hasStructureMode = structureModeStartIndex !== null && structureModeStartIndex < pointCount;
+                        // Calculate mode division point
+                        const modeDivisionX = hasStructureMode && pointCount > 1
+                          ? getXPosition(structureModeStartIndex)
+                          : null;
 
-                          // Calculate mode division point
-                          const modeDivisionX = hasStructureMode && pointCount > 1
-                            ? getXPosition(structureModeStartIndex)
-                            : null;
+                        // Generate smooth curve paths using cubic bezier curves
+                        const getSmoothPath = (points) => {
+                          if (points.length < 2) return '';
+                          if (points.length === 2) {
+                            return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
+                          }
 
-                          // Generate smooth curve paths using cubic bezier curves
-                          const getSmoothPath = (points) => {
-                            if (points.length < 2) return '';
-                            if (points.length === 2) {
-                              return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
+                          let path = `M ${points[0].x},${points[0].y}`;
+
+                          for (let i = 0; i < points.length - 1; i++) {
+                            const current = points[i];
+                            const next = points[i + 1];
+
+                            // Calculate control points for smooth curve
+                            let cp1x, cp1y, cp2x, cp2y;
+
+                            if (i === 0) {
+                              // First segment: use current point and next point
+                              const dx = (next.x - current.x) / 3;
+                              const dy = (next.y - current.y) / 3;
+                              cp1x = current.x + dx;
+                              cp1y = current.y + dy;
+                              cp2x = next.x - dx;
+                              cp2y = next.y - dy;
+                            } else if (i === points.length - 2) {
+                              // Last segment
+                              const prev = points[i - 1];
+                              const dx = (next.x - prev.x) / 6;
+                              const dy = (next.y - prev.y) / 6;
+                              cp1x = current.x + dx;
+                              cp1y = current.y + dy;
+                              cp2x = next.x - dx;
+                              cp2y = next.y - dy;
+                            } else {
+                              // Middle segments: use previous and next points for smoothness
+                              const prev = points[i - 1];
+                              const after = points[i + 2];
+                              const dx1 = (next.x - prev.x) / 6;
+                              const dy1 = (next.y - prev.y) / 6;
+                              const dx2 = (after.x - current.x) / 6;
+                              const dy2 = (after.y - current.y) / 6;
+                              cp1x = current.x + dx1;
+                              cp1y = current.y + dy1;
+                              cp2x = next.x - dx2;
+                              cp2y = next.y - dy2;
                             }
 
-                            let path = `M ${points[0].x},${points[0].y}`;
+                            path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${next.x},${next.y}`;
+                          }
 
-                            for (let i = 0; i < points.length - 1; i++) {
-                              const current = points[i];
-                              const next = points[i + 1];
+                          return path;
+                        };
 
-                              // Calculate control points for smooth curve
-                              let cp1x, cp1y, cp2x, cp2y;
+                        // Generate area paths for gradient fills (smooth curves)
+                        const getHumanAreaPath = () => {
+                          if (pointCount === 0) return '';
+                          const points = creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const humanScore = typeof metrics === 'object'
+                              ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                              : 0;
+                            const y = 90 - (humanScore * 80);
+                            return { x, y };
+                          });
+                          const firstX = getXPosition(0);
+                          const lastX = getXPosition(pointCount - 1);
+                          const smoothPath = getSmoothPath(points);
+                          return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
+                        };
 
-                              if (i === 0) {
-                                // First segment: use current point and next point
-                                const dx = (next.x - current.x) / 3;
-                                const dy = (next.y - current.y) / 3;
-                                cp1x = current.x + dx;
-                                cp1y = current.y + dy;
-                                cp2x = next.x - dx;
-                                cp2y = next.y - dy;
-                              } else if (i === points.length - 2) {
-                                // Last segment
-                                const prev = points[i - 1];
-                                const dx = (next.x - prev.x) / 6;
-                                const dy = (next.y - prev.y) / 6;
-                                cp1x = current.x + dx;
-                                cp1y = current.y + dy;
-                                cp2x = next.x - dx;
-                                cp2y = next.y - dy;
-                              } else {
-                                // Middle segments: use previous and next points for smoothness
-                                const prev = points[i - 1];
-                                const after = points[i + 2];
-                                const dx1 = (next.x - prev.x) / 6;
-                                const dy1 = (next.y - prev.y) / 6;
-                                const dx2 = (after.x - current.x) / 6;
-                                const dy2 = (after.y - current.y) / 6;
-                                cp1x = current.x + dx1;
-                                cp1y = current.y + dy1;
-                                cp2x = next.x - dx2;
-                                cp2y = next.y - dy2;
-                              }
+                        const getAIAreaPath = () => {
+                          if (pointCount === 0) return '';
+                          const points = creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const aiScore = typeof metrics === 'object'
+                              ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                              : 0;
+                            const y = 90 - (aiScore * 80);
+                            return { x, y };
+                          });
+                          const firstX = getXPosition(0);
+                          const lastX = getXPosition(pointCount - 1);
+                          const smoothPath = getSmoothPath(points);
+                          return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
+                        };
 
-                              path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${next.x},${next.y}`;
-                            }
+                        // Generate smooth line path
+                        const getHumanLinePath = () => {
+                          if (pointCount === 0) return '';
+                          const points = creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const humanScore = typeof metrics === 'object'
+                              ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                              : 0;
+                            const y = 90 - (humanScore * 80);
+                            return { x, y };
+                          });
+                          return getSmoothPath(points);
+                        };
 
-                            return path;
-                          };
+                        const getAILinePath = () => {
+                          if (pointCount === 0) return '';
+                          const points = creativityHistory.map((metrics, index) => {
+                            const x = getXPosition(index);
+                            const aiScore = typeof metrics === 'object'
+                              ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                              : 0;
+                            const y = 90 - (aiScore * 80);
+                            return { x, y };
+                          });
+                          return getSmoothPath(points);
+                        };
 
-                          // Generate area paths for gradient fills (smooth curves)
-                          const getHumanAreaPath = () => {
-                            if (pointCount === 0) return '';
-                            const points = creativityHistory.map((metrics, index) => {
-                              const x = getXPosition(index);
-                              const humanScore = typeof metrics === 'object'
-                                ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
-                                : 0;
-                              const y = 90 - (humanScore * 80);
-                              return { x, y };
-                            });
-                            const firstX = getXPosition(0);
-                            const lastX = getXPosition(pointCount - 1);
-                            const smoothPath = getSmoothPath(points);
-                            return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
-                          };
+                        // Y-axis tick marks and labels
+                        const yAxisTicks = [0, 0.25, 0.5, 0.75, 1];
 
-                          const getAIAreaPath = () => {
-                            if (pointCount === 0) return '';
-                            const points = creativityHistory.map((metrics, index) => {
-                              const x = getXPosition(index);
-                              const aiScore = typeof metrics === 'object'
-                                ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
-                                : 0;
-                              const y = 90 - (aiScore * 80);
-                              return { x, y };
-                            });
-                            const firstX = getXPosition(0);
-                            const lastX = getXPosition(pointCount - 1);
-                            const smoothPath = getSmoothPath(points);
-                            return `${smoothPath} L ${lastX},90 L ${firstX},90 Z`;
-                          };
-
-                          // Generate smooth line path
-                          const getHumanLinePath = () => {
-                            if (pointCount === 0) return '';
-                            const points = creativityHistory.map((metrics, index) => {
-                              const x = getXPosition(index);
-                              const humanScore = typeof metrics === 'object'
-                                ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
-                                : 0;
-                              const y = 90 - (humanScore * 80);
-                              return { x, y };
-                            });
-                            return getSmoothPath(points);
-                          };
-
-                          const getAILinePath = () => {
-                            if (pointCount === 0) return '';
-                            const points = creativityHistory.map((metrics, index) => {
-                              const x = getXPosition(index);
-                              const aiScore = typeof metrics === 'object'
-                                ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
-                                : 0;
-                              const y = 90 - (aiScore * 80);
-                              return { x, y };
-                            });
-                            return getSmoothPath(points);
-                          };
-
-                          // Y-axis tick marks and labels
-                          const yAxisTicks = [0, 0.25, 0.5, 0.75, 1];
-
-                          // Calculate X-axis time labels
-                          const getTimeLabels = () => {
-                            if (eventHistory.length === 0 || pointCount === 0) {
-                              // Fallback: show labels at start, middle, end
-                              if (pointCount === 0) return [];
-                              if (pointCount === 1) return [{ index: 0, minutes: 0, x: getXPosition(0) }];
-                              return [
-                                { index: 0, minutes: 0, x: getXPosition(0) },
-                                { index: Math.floor(pointCount / 2), minutes: Math.floor(pointCount * 7.5), x: getXPosition(Math.floor(pointCount / 2)) },
-                                { index: pointCount - 1, minutes: Math.floor(pointCount * 15), x: getXPosition(pointCount - 1) }
-                              ];
-                            }
-
-                            // Get timestamps for each creativityHistory entry
-                            const timestamps = [];
-                            let eventIndex = 0;
-                            for (let i = 0; i < pointCount; i++) {
-                              if (i === 0) {
-                                timestamps.push(eventHistory[0]?.timestamp || new Date().toISOString());
-                              } else {
-                                const eventsPerEntry = Math.max(1, Math.floor(eventHistory.length / pointCount));
-                                eventIndex = Math.min(eventIndex + eventsPerEntry, eventHistory.length - 1);
-                                timestamps.push(eventHistory[eventIndex]?.timestamp || new Date().toISOString());
-                              }
-                            }
-
-                            // Calculate time in minutes from start
-                            const startTime = new Date(timestamps[0]);
-                            const timeLabels = timestamps.map((ts, idx) => {
-                              const time = new Date(ts);
-                              const minutes = Math.floor((time.getTime() - startTime.getTime()) / (1000 * 60));
-                              return { index: idx, minutes, x: getXPosition(idx) };
-                            });
-
-                            // Filter to show only a few labels (start, middle, end, and key points)
-                            if (timeLabels.length <= 3) return timeLabels;
-
-                            const filtered = [
-                              timeLabels[0], // Start
-                              ...(timeLabels.length > 2 ? [timeLabels[Math.floor(timeLabels.length / 2)]] : []), // Middle
-                              timeLabels[timeLabels.length - 1] // End
+                        // Calculate X-axis time labels
+                        const getTimeLabels = () => {
+                          if (eventHistory.length === 0 || pointCount === 0) {
+                            // Fallback: show labels at start, middle, end
+                            if (pointCount === 0) return [];
+                            if (pointCount === 1) return [{ index: 0, minutes: 0, x: getXPosition(0) }];
+                            return [
+                              { index: 0, minutes: 0, x: getXPosition(0) },
+                              { index: Math.floor(pointCount / 2), minutes: Math.floor(pointCount * 7.5), x: getXPosition(Math.floor(pointCount / 2)) },
+                              { index: pointCount - 1, minutes: Math.floor(pointCount * 15), x: getXPosition(pointCount - 1) }
                             ];
+                          }
 
-                            // Add Structure Mode start point if it exists
-                            if (structureModeStartIndex !== null && structureModeStartIndex > 0 && structureModeStartIndex < timeLabels.length) {
-                              const structureLabel = timeLabels[structureModeStartIndex];
-                              if (!filtered.find(l => l.index === structureLabel.index)) {
-                                filtered.push(structureLabel);
-                              }
+                          // Get timestamps for each creativityHistory entry
+                          const timestamps = [];
+                          let eventIndex = 0;
+                          for (let i = 0; i < pointCount; i++) {
+                            if (i === 0) {
+                              timestamps.push(eventHistory[0]?.timestamp || new Date().toISOString());
+                            } else {
+                              const eventsPerEntry = Math.max(1, Math.floor(eventHistory.length / pointCount));
+                              eventIndex = Math.min(eventIndex + eventsPerEntry, eventHistory.length - 1);
+                              timestamps.push(eventHistory[eventIndex]?.timestamp || new Date().toISOString());
                             }
+                          }
 
-                            return filtered.sort((a, b) => a.index - b.index);
-                          };
+                          // Calculate time in minutes from start
+                          const startTime = new Date(timestamps[0]);
+                          const timeLabels = timestamps.map((ts, idx) => {
+                            const time = new Date(ts);
+                            const minutes = Math.floor((time.getTime() - startTime.getTime()) / (1000 * 60));
+                            return { index: idx, minutes, x: getXPosition(idx) };
+                          });
 
-                          const timeLabels = getTimeLabels();
+                          // Filter to show only a few labels (start, middle, end, and key points)
+                          if (timeLabels.length <= 3) return timeLabels;
 
-                          return (
-                            <>
-                              {/* Y-axis tick marks and labels */}
-                              {yAxisTicks.map((value) => {
-                                const y = 90 - (value * 80);
-                                return (
-                                  <g key={`y-tick-${value}`}>
-                                    {/* Tick line */}
-                                    <line
-                                      x1="0"
-                                      y1={y}
-                                      x2="4"
-                                      y2={y}
-                                      stroke="#d1d5db"
-                                      strokeWidth="0.8"
-                                      opacity="0.5"
-                                    />
-                                    {/* Label - positioned at SVG left edge */}
-                                    <text
-                                      x="-10"
-                                      y={y + 2.5}
-                                      fontSize="5"
-                                      fill="#9ca3af"
-                                      fontWeight="400"
-                                      textAnchor="end"
-                                    >
-                                      {value.toFixed(2)}
-                                    </text>
-                                  </g>
-                                );
-                              })}
+                          const filtered = [
+                            timeLabels[0], // Start
+                            ...(timeLabels.length > 2 ? [timeLabels[Math.floor(timeLabels.length / 2)]] : []), // Middle
+                            timeLabels[timeLabels.length - 1] // End
+                          ];
 
-                              {/* X-axis time labels */}
-                              {timeLabels.map((label, idx) => (
-                                <g key={`time-label-${idx}`}>
+                          // Add Structure Mode start point if it exists
+                          if (structureModeStartIndex !== null && structureModeStartIndex > 0 && structureModeStartIndex < timeLabels.length) {
+                            const structureLabel = timeLabels[structureModeStartIndex];
+                            if (!filtered.find(l => l.index === structureLabel.index)) {
+                              filtered.push(structureLabel);
+                            }
+                          }
+
+                          return filtered.sort((a, b) => a.index - b.index);
+                        };
+
+                        const timeLabels = getTimeLabels();
+
+                        return (
+                          <>
+                            {/* Y-axis tick marks and labels */}
+                            {yAxisTicks.map((value) => {
+                              const y = 90 - (value * 80);
+                              return (
+                                <g key={`y-tick-${value}`}>
                                   {/* Tick line */}
                                   <line
-                                    x1={label.x}
-                                    y1="90"
-                                    x2={label.x}
-                                    y2="94"
+                                    x1="0"
+                                    y1={y}
+                                    x2="4"
+                                    y2={y}
                                     stroke="#d1d5db"
                                     strokeWidth="0.8"
                                     opacity="0.5"
                                   />
-                                  {/* Label */}
+                                  {/* Label - positioned at SVG left edge */}
                                   <text
-                                    x={label.x}
-                                    y="98"
-                                    fontSize="5"
+                                    x="-6"
+                                    y={y + 2.5}
+                                    fontSize="4"
                                     fill="#9ca3af"
                                     fontWeight="400"
-                                    textAnchor="middle"
+                                    textAnchor="end"
                                   >
-                                    {label.minutes}m
+                                    {value.toFixed(2)}
                                   </text>
                                 </g>
-                              ))}
+                              );
+                            })}
 
-                              {/* Mode division line */}
-                              {hasStructureMode && modeDivisionX !== null && (
+                            {/* X-axis time labels */}
+                            {timeLabels.map((label, idx) => (
+                              <g key={`time-label-${idx}`}>
+                                {/* Tick line */}
                                 <line
-                                  x1={modeDivisionX}
-                                  y1="0"
-                                  x2={modeDivisionX}
-                                  y2="100"
-                                  stroke="#f97316"
-                                  strokeWidth="1.5"
-                                  strokeDasharray="4,4"
-                                  opacity="0.6"
+                                  x1={label.x}
+                                  y1="90"
+                                  x2={label.x}
+                                  y2="94"
+                                  stroke="#d1d5db"
+                                  strokeWidth="0.8"
+                                  opacity="0.5"
                                 />
-                              )}
+                                {/* Label */}
+                                <text
+                                  x={label.x}
+                                  y="100"
+                                  fontSize="4"
+                                  fill="#9ca3af"
+                                  fontWeight="400"
+                                  textAnchor="middle"
+                                >
+                                  {label.minutes}m
+                                </text>
+                              </g>
+                            ))}
 
-                              {/* Gradient area fills - below lines */}
-                              {/* Human area (purple gradient) */}
-                              {pointCount > 0 && (
-                                <path
-                                  d={getHumanAreaPath()}
-                                  fill="url(#humanGradient)"
-                                  className="transition-all duration-700 ease-out"
-                                />
-                              )}
+                            {/* Mode division line - solid orange line */}
+                            {hasStructureMode && modeDivisionX !== null && (
+                              <line
+                                x1={modeDivisionX}
+                                y1="0"
+                                x2={modeDivisionX}
+                                y2="100"
+                                stroke="#f97316"
+                                strokeWidth="2"
+                                opacity="0.8"
+                              />
+                            )}
 
-                              {/* AI area (orange gradient) */}
-                              {pointCount > 0 && (
-                                <path
-                                  d={getAIAreaPath()}
-                                  fill="url(#aiGradient)"
-                                  className="transition-all duration-700 ease-out"
-                                />
-                              )}
+                            {/* Gradient area fills - below lines */}
+                            {/* Human area (purple gradient) */}
+                            {pointCount > 0 && (
+                              <path
+                                d={getHumanAreaPath()}
+                                fill="url(#humanGradient)"
+                                className="transition-all duration-700 ease-out"
+                              />
+                            )}
 
-                              {/* Human line (purple) - smooth curve */}
-                              {pointCount > 0 && (
-                                <path
-                                  d={getHumanLinePath()}
-                                  fill="none"
-                                  stroke="#8b5cf6"
-                                  strokeWidth="1.2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  className="transition-all duration-700 ease-out"
-                                />
-                              )}
-                              {creativityHistory.map((metrics, index) => {
-                                const x = getXPosition(index);
-                                const humanScore = typeof metrics === 'object'
-                                  ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
-                                  : 0;
-                                const y = 90 - (humanScore * 80);
-                                const isLast = index === creativityHistory.length - 1;
-                                const isHovered = hoveredPointIndex === index;
-                                return (
-                                  <g key={`process-human-${index}`} className="transition-all duration-700 ease-out">
-                                    <circle
-                                      cx={x}
-                                      cy={y}
-                                      r={isHovered ? "4" : "2"}
-                                      fill="#8b5cf6"
-                                      stroke="white"
-                                      strokeWidth="0.8"
-                                      opacity="0.95"
-                                      className={isLast ? "animate-pulse" : ""}
-                                      style={{
-                                        transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
-                                        cursor: 'pointer'
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        const svg = e.currentTarget.ownerSVGElement;
-                                        if (svg) {
-                                          const svgRect = svg.getBoundingClientRect();
-                                          const viewBox = svg.viewBox.baseVal;
-                                          const scaleX = svgRect.width / viewBox.width;
-                                          const scaleY = svgRect.height / viewBox.height;
-                                          // Convert SVG coordinates to pixel coordinates
-                                          const pixelX = (x - viewBox.x) * scaleX;
-                                          const pixelY = (y - viewBox.y) * scaleY;
-                                          setTooltipPosition({
-                                            x: pixelX,
-                                            y: pixelY
-                                          });
-                                        }
-                                        setHoveredPointIndex(index);
-                                        setHoveredLineType('human');
-                                      }}
-                                      onMouseLeave={() => {
-                                        setHoveredPointIndex(null);
-                                        setHoveredLineType(null);
-                                      }}
-                                    >
-                                      {isLast && (
-                                        <animate
-                                          attributeName="r"
-                                          values="2;3;2"
-                                          dur="0.6s"
-                                          repeatCount="1"
-                                        />
-                                      )}
-                                    </circle>
-                                  </g>
-                                );
-                              })}
+                            {/* AI area (orange gradient) */}
+                            {pointCount > 0 && (
+                              <path
+                                d={getAIAreaPath()}
+                                fill="url(#aiGradient)"
+                                className="transition-all duration-700 ease-out"
+                              />
+                            )}
 
-                              {/* AI line (orange) - smooth curve */}
-                              {pointCount > 0 && (
-                                <path
-                                  d={getAILinePath()}
-                                  fill="none"
-                                  stroke="#f97316"
-                                  strokeWidth="1.2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  className="transition-all duration-700 ease-out"
-                                />
-                              )}
-                              {creativityHistory.map((metrics, index) => {
-                                const x = getXPosition(index);
-                                const aiScore = typeof metrics === 'object'
-                                  ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
-                                  : 0;
-                                const y = 90 - (aiScore * 80);
-                                const isLast = index === creativityHistory.length - 1;
-                                const isHovered = hoveredPointIndex === index;
-                                return (
-                                  <g key={`process-ai-${index}`} className="transition-all duration-700 ease-out">
-                                    <circle
-                                      cx={x}
-                                      cy={y}
-                                      r={isHovered ? "4" : "2"}
-                                      fill="#f97316"
-                                      stroke="white"
-                                      strokeWidth="0.8"
-                                      opacity="0.95"
-                                      className={isLast ? "animate-pulse" : ""}
-                                      style={{
-                                        transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
-                                        cursor: 'pointer'
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        const svg = e.currentTarget.ownerSVGElement;
-                                        if (svg) {
-                                          const svgRect = svg.getBoundingClientRect();
-                                          const viewBox = svg.viewBox.baseVal;
-                                          const scaleX = svgRect.width / viewBox.width;
-                                          const scaleY = svgRect.height / viewBox.height;
-                                          // Convert SVG coordinates to pixel coordinates
-                                          const pixelX = (x - viewBox.x) * scaleX;
-                                          const pixelY = (y - viewBox.y) * scaleY;
-                                          setTooltipPosition({
-                                            x: pixelX,
-                                            y: pixelY
-                                          });
-                                        }
-                                        setHoveredPointIndex(index);
-                                      }}
-                                      onMouseLeave={() => {
-                                        setHoveredPointIndex(null);
-                                      }}
-                                    >
-                                      {isLast && (
-                                        <animate
-                                          attributeName="r"
-                                          values="2;3;2"
-                                          dur="0.6s"
-                                          begin="0.1s"
-                                          repeatCount="1"
-                                        />
-                                      )}
-                                    </circle>
-                                  </g>
-                                );
-                              })}
-                            </>
-                          );
-                        })()}
-                      </svg>
-                    </div>
+                            {/* Human line (purple) - smooth curve */}
+                            {pointCount > 0 && (
+                              <path
+                                d={getHumanLinePath()}
+                                fill="none"
+                                stroke="#8b5cf6"
+                                strokeWidth="1.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="transition-all duration-700 ease-out"
+                              />
+                            )}
+                            {creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const humanScore = typeof metrics === 'object'
+                                ? (metrics.curve_human_ratio ?? metrics.creativity ?? 0)
+                                : 0;
+                              const y = 90 - (humanScore * 80);
+                              const isLast = index === creativityHistory.length - 1;
+                              const isHovered = hoveredPointIndex === index;
+                              return (
+                                <g key={`process-human-${index}`} className="transition-all duration-700 ease-out">
+                                  <circle
+                                    cx={x}
+                                    cy={y}
+                                    r={isHovered ? "4" : "2"}
+                                    fill="#8b5cf6"
+                                    stroke="white"
+                                    strokeWidth="0.8"
+                                    opacity="0.95"
+                                    className={isLast ? "animate-pulse" : ""}
+                                    style={{
+                                      transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
+                                      cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      const svg = e.currentTarget.ownerSVGElement;
+                                      if (svg) {
+                                        const svgRect = svg.getBoundingClientRect();
+                                        const viewBox = svg.viewBox.baseVal;
+                                        const scaleX = svgRect.width / viewBox.width;
+                                        const scaleY = svgRect.height / viewBox.height;
+                                        // Convert SVG coordinates to pixel coordinates
+                                        const pixelX = (x - viewBox.x) * scaleX;
+                                        const pixelY = (y - viewBox.y) * scaleY;
+                                        setTooltipPosition({
+                                          x: pixelX,
+                                          y: pixelY
+                                        });
+                                      }
+                                      setHoveredPointIndex(index);
+                                      setHoveredLineType('human');
+                                    }}
+                                    onMouseLeave={() => {
+                                      setHoveredPointIndex(null);
+                                      setHoveredLineType(null);
+                                    }}
+                                  >
+                                    {isLast && (
+                                      <animate
+                                        attributeName="r"
+                                        values="2;3;2"
+                                        dur="0.6s"
+                                        repeatCount="1"
+                                      />
+                                    )}
+                                  </circle>
+                                </g>
+                              );
+                            })}
 
-                    {/* Legend */}
-                    <div className="flex items-center justify-center mt-4">
-                      <div className="flex items-center gap-6">
-                        <div className="flex items-center gap-2">
-                          <div className="w-10 h-1.5 bg-purple-500 rounded"></div>
-                          <span className="text-sm text-gray-700 font-medium">Human</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-10 h-1.5 bg-orange-500 rounded"></div>
-                          <span className="text-sm text-gray-700 font-medium">AI</span>
-                        </div>
+                            {/* AI line (orange) - smooth curve */}
+                            {pointCount > 0 && (
+                              <path
+                                d={getAILinePath()}
+                                fill="none"
+                                stroke="#f97316"
+                                strokeWidth="1.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="transition-all duration-700 ease-out"
+                              />
+                            )}
+                            {creativityHistory.map((metrics, index) => {
+                              const x = getXPosition(index);
+                              const aiScore = typeof metrics === 'object'
+                                ? (metrics.curve_ai_ratio ?? metrics.dependency ?? 0)
+                                : 0;
+                              const y = 90 - (aiScore * 80);
+                              const isLast = index === creativityHistory.length - 1;
+                              const isHovered = hoveredPointIndex === index;
+                              return (
+                                <g key={`process-ai-${index}`} className="transition-all duration-700 ease-out">
+                                  <circle
+                                    cx={x}
+                                    cy={y}
+                                    r={isHovered ? "4" : "2"}
+                                    fill="#f97316"
+                                    stroke="white"
+                                    strokeWidth="0.8"
+                                    opacity="0.95"
+                                    className={isLast ? "animate-pulse" : ""}
+                                    style={{
+                                      transition: 'all 0.7s cubic-bezier(0.4, 0, 0.2, 1)',
+                                      cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      const svg = e.currentTarget.ownerSVGElement;
+                                      if (svg) {
+                                        const svgRect = svg.getBoundingClientRect();
+                                        const viewBox = svg.viewBox.baseVal;
+                                        const scaleX = svgRect.width / viewBox.width;
+                                        const scaleY = svgRect.height / viewBox.height;
+                                        // Convert SVG coordinates to pixel coordinates
+                                        const pixelX = (x - viewBox.x) * scaleX;
+                                        const pixelY = (y - viewBox.y) * scaleY;
+                                        setTooltipPosition({
+                                          x: pixelX,
+                                          y: pixelY
+                                        });
+                                      }
+                                      setHoveredPointIndex(index);
+                                    }}
+                                    onMouseLeave={() => {
+                                      setHoveredPointIndex(null);
+                                    }}
+                                  >
+                                    {isLast && (
+                                      <animate
+                                        attributeName="r"
+                                        values="2;3;2"
+                                        dur="0.6s"
+                                        begin="0.1s"
+                                        repeatCount="1"
+                                      />
+                                    )}
+                                  </circle>
+                                </g>
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex items-center justify-center mt-4">
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <div className="w-10 h-1.5 bg-purple-500 rounded"></div>
+                        <span className="text-sm text-gray-700 font-medium">Human</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-10 h-1.5 bg-orange-500 rounded"></div>
+                        <span className="text-sm text-gray-700 font-medium">AI</span>
                       </div>
                     </div>
                   </div>
@@ -5418,10 +5537,10 @@ Note:
             if (isSelected || isEditing) {
               // Calculate size based on text length: longer text = larger node
               // More conservative size increase
-              const textBasedSize = Math.min(textLength * 1.5, 80); // Max 80px additional
+              const textBasedSize = Math.min(textLength * 1.0, 50); // Max 50px additional
               dynamicNodeSize = Math.max(baseNodeSize, baseNodeSize + textBasedSize);
               // Cap at reasonable maximum
-              dynamicNodeSize = Math.min(dynamicNodeSize, baseNodeSize * 2.5);
+              dynamicNodeSize = Math.min(dynamicNodeSize, baseNodeSize * 2.0);
             }
 
             const nodeSize = dynamicNodeSize;
@@ -5847,9 +5966,12 @@ Note:
           {addNodeModal && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center" onClick={handleAddNodeCancel}>
               <div className="bg-white rounded-xl shadow-2xl p-6 min-w-[400px] max-w-[500px]" onClick={(e) => e.stopPropagation()}>
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Add New Node</h3>
+                <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <User size={20} className="text-[#8b5cf6]" />
+                  Add New Node
+                </h3>
                 <p className="text-sm text-gray-600 mb-4">
-                  Enter the text for the new node that will be connected to "{nodes.find(n => n.id === addNodeModal)?.text || ''}"
+                  Last node: "{nodes.find(n => n.id === addNodeModal)?.text || ''}"
                 </p>
                 <textarea
                   value={addNodeText}
@@ -6138,9 +6260,21 @@ Note:
           {mode === 'exploration' && nodes.length > 0 && (
             <div className={`fixed bottom-6 w-[360px] z-[90] shadow-2xl bg-white rounded-lg ${isReflectionSidebarOpen ? 'right-[400px]' : 'right-6'}`} style={{ pointerEvents: 'auto' }}>
               <div className="bg-white rounded-lg shadow-lg p-4 border border-gray-200">
-                <div className="mb-3">
-                  <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
-                  <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800">Creative Flow Timeline</h3>
+                    <p className="text-xs text-gray-600 mt-1">Watch your creativity journey unfold! 🎨</p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCurrentPage('tracking');
+                    }}
+                    className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
+                    title="View Details"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
                 </div>
                 <div className="border-t border-dotted border-blue-300 mb-3"></div>
 
@@ -6269,28 +6403,16 @@ Note:
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-1 rounded" style={{ backgroundColor: '#8b5cf6' }}></div>
-                      <span className="text-xs text-gray-700">Creativity</span>
+                      <span className="text-xs text-gray-700">Human</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-1 bg-orange-500 rounded"></div>
-                      <span className="text-xs text-gray-700">Dependency</span>
+                      <span className="text-xs text-gray-700">Ai</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                      <span style={{ color: '#8b5cf6' }}>↑</span>
-                      <span>{Math.round(currentCreativity * 100)}%</span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCurrentPage('tracking');
-                      }}
-                      className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
-                      title="View Details"
-                    >
-                      <Maximize2 size={18} />
-                    </button>
+                  <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
+                    <TrendingUp size={14} className="text-[#8b5cf6]" />
+                    <span>{Math.round(currentCreativity * 100)}%</span>
                   </div>
                 </div>
               </div>
