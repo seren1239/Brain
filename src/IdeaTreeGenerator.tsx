@@ -158,8 +158,7 @@ export default function IdeaTreeGenerator() {
   const [loading, setLoading] = useState(false);
   const [focusedNode, setFocusedNode] = useState(null);
   const [creativityHistory, setCreativityHistory] = useState([]);
-  const [currentPage, setCurrentPage] = useState('main'); // 'main' or 'report'
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' or 'timeline'
+  const [currentPage, setCurrentPage] = useState('main'); // 'main' or 'tracking'
   const [editCount, setEditCount] = useState(0);
   const [aiGenerationCount, setAiGenerationCount] = useState(0);
   const [eventHistory, setEventHistory] = useState([]); // Track all events for semantic scoring
@@ -2415,7 +2414,6 @@ Note:
     setLandingInputValue('');
     setMode('exploration');
     setCurrentPage('main'); // Reset page to main
-    setActiveTab('overview'); // Reset tab to overview
     setSelectedNode(null);
     setEditingNode(null);
     setEditValue('');
@@ -3056,7 +3054,7 @@ Note:
   // For now, we'll keep the code below but add a check here that will be ignored
   // TODO: Move the entire report page block (lines 3574-5878) to this location (before line 2875)
 
-  if (mode === 'structure' && currentPage !== 'report') {
+  if (mode === 'structure' && currentPage !== 'tracking') {
     // Use stored node IDs from structure analysis, not current selection
     const selectedNodes = nodes.filter(n => structureSelectedNodeIds.has(n.id));
 
@@ -3269,19 +3267,18 @@ Note:
               {/* Divider */}
               <div className="w-px h-8 bg-gray-300"></div>
 
-              {/* Creativity Report Button */}
+              {/* Creativity Tracking Button */}
               <button
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setCurrentPage('report');
-                  setActiveTab('timeline');
+                  setCurrentPage('tracking');
                 }}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors text-gray-700 font-medium"
-                title="View Creativity Report"
+                title="View Creativity Tracking"
               >
                 <BarChart size={18} />
-                <span>Creativity Report</span>
+                <span>Creativity Tracking</span>
               </button>
             </div>
           </div>
@@ -3807,8 +3804,7 @@ Note:
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setCurrentPage('report');
-                          setActiveTab('overview');
+                          setCurrentPage('tracking');
                         }}
                         className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
                         title="View Details"
@@ -3827,8 +3823,8 @@ Note:
     );
   }
 
-  // Creativity Report Page
-  if (currentPage === 'report') {
+  // Creativity Tracking Page
+  if (currentPage === 'tracking') {
     return (
       <div className="w-full h-screen flex flex-col" style={{ background: 'linear-gradient(to right, #FAF5FF 0%, #FDF2F8 50%, #FFF7ED 100%)' }}>
         <div className="p-6">
@@ -3858,43 +3854,20 @@ Note:
                   </svg>
                 </div>
                 <h1 className="text-2xl font-bold text-gray-800">
-                  {activeTab === 'overview' ? 'Creativity Tracking' : 'Creativity Report'}
+                  Creativity Tracking
                 </h1>
               </div>
               <p className="text-sm text-gray-600 mt-1">
-                {activeTab === 'overview'
-                  ? 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'
-                  : 'Analyze your creative process using Semantic Space dimensions and track Human-AI collaboration patterns.'}
+                Explore your creative flow and visualize how you collaborate with AI!
               </p>
-              {/* Tab Buttons */}
-              <div className="flex gap-3 mt-4">
-                <button
-                  onClick={() => setActiveTab('overview')}
-                  className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${activeTab === 'overview'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                    }`}
-                >
-                  Process
-                </button>
-                <button
-                  onClick={() => setActiveTab('timeline')}
-                  className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${activeTab === 'timeline'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                    }`}
-                >
-                  Outcome
-                </button>
-              </div>
             </div>
           </div>
         </div>
 
         <div className="flex-1 overflow-auto p-6">
-          {/* Process Tab (formerly Overview) */}
-          {activeTab === 'overview' && (() => {
-            // Calculate Semantic Space scores from event history
+          {/* Creativity Tracking Content - TTCT Scores */}
+          {(() => {
+            // Calculate TTCT scores based on TTCT + Dependency Framework
             const calculateSemanticScores = (actor) => {
               const events = eventHistory.filter(e => e.actor === actor);
               if (events.length === 0) {
@@ -4941,8 +4914,8 @@ Note:
             );
           })()}
 
-          {/* Outcome Tab */}
-          {activeTab === 'timeline' && (() => {
+          {/* Creativity Tracking Content - TTCT Scores */}
+          {(() => {
             // Calculate TTCT scores based on TTCT + Dependency Framework
             // Formula: CI' = 0.25F + 0.25X + 0.30O + 0.20E – 0.20D
             const calculateTTCTScores = (actor) => {
@@ -5071,239 +5044,7 @@ Note:
             if (humanScores.elaboration > aiScores.elaboration) humanStrengths.push('Elaboration');
             if (aiScores.elaboration > humanScores.elaboration) aiStrengths.push('Elaboration');
 
-            return (
-              <>
-                {/* TTCT Creativity Dimensions and Side-by-Side Comparison */}
-                <div className="grid grid-cols-2 gap-6 mb-6">
-                  {/* Left: TTCT Creativity Dimensions - Radar Chart */}
-                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">TTCT Creativity Dimensions</h3>
-                    <div className="flex items-center justify-center my-8">
-                      <svg width="400" height="400" viewBox="0 0 400 400" style={{ overflow: 'visible' }}>
-                        {/* Grid circles */}
-                        {[25, 50, 75, 100].map((radius) => (
-                          <circle
-                            key={radius}
-                            cx="200"
-                            cy="200"
-                            r={radius * 1.5}
-                            fill="none"
-                            stroke="#e5e7eb"
-                            strokeWidth="1"
-                            strokeDasharray="2,2"
-                          />
-                        ))}
-
-                        {/* Axes - 4 axes (90 degrees apart) */}
-                        {[
-                          { label: 'Fluency', angle: -90 },
-                          { label: 'Flexibility', angle: 0 },
-                          { label: 'Originality', angle: 90 },
-                          { label: 'Elaboration', angle: 180 }
-                        ].map((axis) => {
-                          const angle = (axis.angle * Math.PI) / 180;
-                          const centerX = 200;
-                          const centerY = 200;
-                          const axisLength = 150;
-                          const x = centerX + axisLength * Math.cos(angle);
-                          const y = centerY + axisLength * Math.sin(angle);
-
-                          const labelDistance = 30;
-                          const labelX = centerX + (axisLength + labelDistance) * Math.cos(angle);
-                          const labelY = centerY + (axisLength + labelDistance) * Math.sin(angle);
-
-                          return (
-                            <g key={axis.label}>
-                              <line
-                                x1={centerX}
-                                y1={centerY}
-                                x2={x}
-                                y2={y}
-                                stroke="#d1d5db"
-                                strokeWidth="1"
-                              />
-                              <g>
-                                <rect
-                                  x={labelX - (axis.label.length * 3.5)}
-                                  y={labelY - 8}
-                                  width={axis.label.length * 7}
-                                  height={16}
-                                  fill="white"
-                                  fillOpacity="0.9"
-                                  stroke="none"
-                                  rx="2"
-                                />
-                                <text
-                                  x={labelX}
-                                  y={labelY + 4}
-                                  fontSize="11"
-                                  fill="#374151"
-                                  textAnchor="middle"
-                                  fontWeight="600"
-                                  style={{ pointerEvents: 'none' }}
-                                >
-                                  {axis.label}
-                                </text>
-                              </g>
-                            </g>
-                          );
-                        })}
-
-                        {/* AI Polygon (pink) */}
-                        <polygon
-                          points={[
-                            `${200 + (aiScores.fluency / 100) * 150 * Math.cos(-90 * Math.PI / 180)},${200 + (aiScores.fluency / 100) * 150 * Math.sin(-90 * Math.PI / 180)}`,
-                            `${200 + (aiScores.flexibility / 100) * 150 * Math.cos(0 * Math.PI / 180)},${200 + (aiScores.flexibility / 100) * 150 * Math.sin(0 * Math.PI / 180)}`,
-                            `${200 + (aiScores.originality / 100) * 150 * Math.cos(90 * Math.PI / 180)},${200 + (aiScores.originality / 100) * 150 * Math.sin(90 * Math.PI / 180)}`,
-                            `${200 + (aiScores.elaboration / 100) * 150 * Math.cos(180 * Math.PI / 180)},${200 + (aiScores.elaboration / 100) * 150 * Math.sin(180 * Math.PI / 180)}`
-                          ].join(' ')}
-                          fill="#ec4899"
-                          fillOpacity="0.3"
-                          stroke="#ec4899"
-                          strokeWidth="2"
-                        />
-
-                        {/* Human Polygon (purple) */}
-                        {eventHistory.some(e => e.actor === 'HUMAN') && (
-                          <polygon
-                            points={[
-                              `${200 + (humanScores.fluency / 100) * 150 * Math.cos(-90 * Math.PI / 180)},${200 + (humanScores.fluency / 100) * 150 * Math.sin(-90 * Math.PI / 180)}`,
-                              `${200 + (humanScores.flexibility / 100) * 150 * Math.cos(0 * Math.PI / 180)},${200 + (humanScores.flexibility / 100) * 150 * Math.sin(0 * Math.PI / 180)}`,
-                              `${200 + (humanScores.originality / 100) * 150 * Math.cos(90 * Math.PI / 180)},${200 + (humanScores.originality / 100) * 150 * Math.sin(90 * Math.PI / 180)}`,
-                              `${200 + (humanScores.elaboration / 100) * 150 * Math.cos(180 * Math.PI / 180)},${200 + (humanScores.elaboration / 100) * 150 * Math.sin(180 * Math.PI / 180)}`
-                            ].join(' ')}
-                            fill="#8b5cf6"
-                            fillOpacity="0.3"
-                            stroke="#8b5cf6"
-                            strokeWidth="2"
-                          />
-                        )}
-                      </svg>
-                    </div>
-                    <div className="flex items-center justify-center gap-4 mt-6">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-pink-500"></div>
-                        <span className="text-sm text-gray-700">AI</span>
-                      </div>
-                      {eventHistory.some(e => e.actor === 'HUMAN') && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded bg-purple-500"></div>
-                          <span className="text-sm text-gray-700">Human</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right: Side-by-Side Comparison - Bar Chart */}
-                  <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">Side-by-Side Comparison</h3>
-                    <div className="space-y-6 mt-8">
-                      {['Fluency', 'Flexibility', 'Originality', 'Elaboration'].map((dimension) => {
-                        const aiScore = aiScores[dimension.toLowerCase() as keyof typeof aiScores];
-                        const humanScore = humanScores[dimension.toLowerCase() as keyof typeof humanScores];
-                        return (
-                          <div key={dimension}>
-                            <div className="flex justify-between mb-2">
-                              <span className="text-sm font-medium text-gray-700">{dimension}</span>
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-3">
-                                <span className="text-xs text-gray-600 w-12">AI</span>
-                                <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
-                                  <div
-                                    className="bg-pink-500 h-4 rounded-full"
-                                    style={{ width: `${aiScore}%` }}
-                                  ></div>
-                                  <span className="absolute right-2 top-0 text-xs text-gray-700 leading-4">{Math.round(aiScore)}</span>
-                                </div>
-                              </div>
-                              {eventHistory.some(e => e.actor === 'HUMAN') && (
-                                <div className="flex items-center gap-3">
-                                  <span className="text-xs text-gray-600 w-12">Human</span>
-                                  <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
-                                    <div
-                                      className="bg-purple-500 h-4 rounded-full"
-                                      style={{ width: `${humanScore}%` }}
-                                    ></div>
-                                    <span className="absolute right-2 top-0 text-xs text-gray-700 leading-4">{Math.round(humanScore)}</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="flex items-center justify-center gap-4 mt-6">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-pink-500"></div>
-                        <span className="text-sm text-gray-700">AI</span>
-                      </div>
-                      {eventHistory.some(e => e.actor === 'HUMAN') && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded bg-purple-500"></div>
-                          <span className="text-sm text-gray-700">Human</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Strengths */}
-                    <div className="grid grid-cols-2 gap-4 mt-6">
-                      {humanStrengths.length > 0 && (
-                        <div className="bg-purple-50 rounded-lg p-4">
-                          <div className="flex items-center gap-2 mb-2">
-                            <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                            <span className="text-sm font-semibold text-gray-800">Your Strength</span>
-                          </div>
-                          <p className="text-xs text-gray-700">{humanStrengths.join(' & ')}</p>
-                        </div>
-                      )}
-                      {aiStrengths.length > 0 && (
-                        <div className="bg-pink-50 rounded-lg p-4">
-                          <div className="flex items-center gap-2 mb-2">
-                            <svg className="w-5 h-5 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                            </svg>
-                            <span className="text-sm font-semibold text-gray-800">AI Strength</span>
-                          </div>
-                          <p className="text-xs text-gray-700">{aiStrengths.join(' & ')}</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Understanding TTCT Dimensions */}
-                <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4">Understanding TTCT Dimensions</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Fluency - Light purple/lavender */}
-                    <div className="bg-purple-50 rounded-lg p-4 border border-purple-100">
-                      <h4 className="font-bold text-purple-700 mb-2">Fluency</h4>
-                      <p className="text-sm text-gray-700">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
-                    </div>
-                    {/* Flexibility - Light blue/teal */}
-                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                      <h4 className="font-bold text-blue-700 mb-2">Flexibility</h4>
-                      <p className="text-sm text-gray-700">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
-                    </div>
-                    {/* Originality - Light pink/rose */}
-                    <div className="bg-pink-50 rounded-lg p-4 border border-pink-100">
-                      <h4 className="font-bold text-pink-800 mb-2">Originality</h4>
-                      <p className="text-sm text-gray-700">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
-                    </div>
-                    {/* Elaboration - Light yellow/orange */}
-                    <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
-                      <h4 className="font-bold text-orange-700 mb-2">Elaboration</h4>
-                      <p className="text-sm text-gray-700">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
-                    </div>
-                  </div>
-                </div>
-              </>
-            );
+            return null;
           })()}
         </div>
       </div >
@@ -6543,8 +6284,7 @@ Note:
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setCurrentPage('report');
-                        setActiveTab('overview');
+                        setCurrentPage('tracking');
                       }}
                       className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
                       title="View Details"
