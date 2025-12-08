@@ -122,12 +122,13 @@ function CircleNode({ node, pos, size, color, isSelected, onSelect, onMouseDown,
       {isHovered && (
         <div
           ref={tooltipRef}
-          className={`absolute bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 text-sm z-20 break-words ${tooltipPosition === 'right' ? 'left-full ml-2 top-1/2 -translate-y-1/2' :
+          className={`absolute bg-white px-3 py-2 shadow-lg border border-gray-200 text-sm z-20 break-words ${tooltipPosition === 'right' ? 'left-full ml-2 top-1/2 -translate-y-1/2' :
             tooltipPosition === 'left' ? 'right-full mr-2 top-1/2 -translate-y-1/2' :
               tooltipPosition === 'bottom' ? 'top-full mt-2 left-1/2 -translate-x-1/2' :
                 'bottom-full mb-2 left-1/2 -translate-x-1/2'
             }`}
           style={{
+            borderRadius: '16px',
             wordBreak: 'break-word',
             whiteSpace: 'normal',
             width: '200px',
@@ -237,6 +238,7 @@ export default function IdeaTreeGenerator() {
         setCreativityHistory(data.creativityHistory || []);
         setEditCount(data.editCount || 0);
         setAiGenerationCount(data.aiGenerationCount || 0);
+        setEventHistory(data.eventHistory || []); // Restore event history
         setHierarchyAnalysis(data.hierarchyAnalysis || null);
         setStructureReflections(data.structureReflections || []);
         setDesignTopic(data.designTopic || '');
@@ -322,6 +324,7 @@ export default function IdeaTreeGenerator() {
       creativityHistory,
       editCount,
       aiGenerationCount,
+      eventHistory, // Save event history for other features
       hierarchyAnalysis,
       structureReflections,
       currentStep,
@@ -331,7 +334,7 @@ export default function IdeaTreeGenerator() {
       structureGridPositions
     };
     localStorage.setItem('ideaTreeData', JSON.stringify(dataToSave));
-  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId, structureSelectedNodeIds]);
+  }, [nodes, reflections, creativityHistory, editCount, aiGenerationCount, eventHistory, hierarchyAnalysis, structureReflections, currentStep, designTopic, topicNodeId, structureSelectedNodeIds]);
 
   // ============================================================================
   // NEW SEMANTIC SPACE FRAMEWORK
@@ -780,7 +783,8 @@ export default function IdeaTreeGenerator() {
         x: 600, // Center of canvas
         y: 100, // Top area
         level: 0,
-        manuallyPositioned: false
+        manuallyPositioned: false,
+        creationType: 'human' // Human creates the initial topic
       };
 
       setNodes([topicNode]);
@@ -934,7 +938,7 @@ Note:
         const baseY = parentPos.y + 120;
 
         // Apply collision detection only during initial creation
-        const nodeSize = 120; // main node size
+        const nodeSize = 140; // main node size
         const allExistingNodes = nodes.filter(n => n.id !== nodeId);
         const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
         const initialX = adjustedPos.x;
@@ -952,8 +956,9 @@ Note:
           parentId: parentTopicId, // Connect to TOPIC node
           x: initialX,
           y: initialY,
-          level: 1,
-          manuallyPositioned: false
+          level: 0,
+          manuallyPositioned: false,
+          creationType: 'ai' // AI generates main nodes
         };
       });
 
@@ -1018,10 +1023,7 @@ Note:
   const generateStep2SubNodesForMulti = async (parentNode) => {
     if (parentNode.type !== 'main' || parentNode.step !== 1) return [];
 
-    // Check if already expanded
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id || (n.parentIds && n.parentIds.includes(parentNode.id)));
-    if (existingChildren.length > 0) return [];
-
+    // Allow generating additional children even if children already exist
     return await generateStep2SubNodesInternal(parentNode);
   };
 
@@ -1135,7 +1137,7 @@ Note:
         const baseY = parentPos.y + 120;
 
         // Apply collision detection only during initial creation
-        const nodeSize = 100; // sub node size
+        const nodeSize = 120; // sub node size
         const allExistingNodes = nodes.filter(n => n.id !== nodeId);
         const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
         const initialX = adjustedPos.x;
@@ -1154,7 +1156,8 @@ Note:
           x: initialX,
           y: initialY,
           level: 1,
-          manuallyPositioned: false
+          manuallyPositioned: false,
+          creationType: 'ai' // AI generates sub nodes
         };
       });
 
@@ -1192,10 +1195,7 @@ Note:
     // Allow both main (step 1) and sub (step 2) nodes to generate insights
     if ((parentNode.type !== 'main' && parentNode.type !== 'sub') || (parentNode.step !== 1 && parentNode.step !== 2)) return;
 
-    // Check if already expanded
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id);
-    if (existingChildren.length > 0) return;
-
+    // Allow generating additional children even if children already exist
     setLoading(true);
     await generateStep3InsightsInternal(parentNode);
     // Update creativityHistory for single node expansion
@@ -1214,10 +1214,7 @@ Note:
 
     if (parentNode.type !== 'main' || parentNode.step !== 1) return;
 
-    // Check if already expanded
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id);
-    if (existingChildren.length > 0) return;
-
+    // Allow generating additional children even if children already exist
     setLoading(true);
     await generateStep2SubNodesInternal(parentNode);
     // Update creativityHistory for single node expansion
@@ -1231,9 +1228,7 @@ Note:
     // Allow both main (step 1) and sub (step 2) nodes to generate insights
     if ((parentNode.type !== 'main' && parentNode.type !== 'sub') || (parentNode.step !== 1 && parentNode.step !== 2)) return [];
 
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id || (n.parentIds && n.parentIds.includes(parentNode.id)));
-    if (existingChildren.length > 0) return [];
-
+    // Allow generating additional children even if children already exist
     return await generateStep3InsightsInternal(parentNode);
   };
 
@@ -1351,7 +1346,7 @@ Note:
         const baseY = parentPos.y + 120;
 
         // Apply collision detection only during initial creation
-        const nodeSize = 90; // insight node size
+        const nodeSize = 110; // insight node size
         const allExistingNodes = nodes.filter(n => n.id !== nodeId);
         const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
         const initialX = adjustedPos.x;
@@ -1370,7 +1365,8 @@ Note:
           x: initialX,
           y: initialY,
           level: 2,
-          manuallyPositioned: false
+          manuallyPositioned: false,
+          creationType: 'ai' // AI generates insight nodes
         };
       });
 
@@ -1407,9 +1403,7 @@ Note:
   const generateStep4OpportunitiesForMulti = async (parentNode) => {
     if (parentNode.type !== 'insight' || parentNode.step !== 3) return [];
 
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id || (n.parentIds && n.parentIds.includes(parentNode.id)));
-    if (existingChildren.length > 0) return [];
-
+    // Allow generating additional children even if children already exist
     return await generateStep4OpportunitiesInternal(parentNode);
   };
 
@@ -1529,7 +1523,7 @@ Note:
         const baseY = parentPos.y + 120;
 
         // Apply collision detection only during initial creation
-        const nodeSize = 80; // opportunity node size
+        const nodeSize = 110; // opportunity node size
         const allExistingNodes = nodes.filter(n => n.id !== nodeId);
         const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, nodeId);
         const initialX = adjustedPos.x;
@@ -1548,7 +1542,8 @@ Note:
           x: initialX,
           y: initialY,
           level: 3,
-          manuallyPositioned: false
+          manuallyPositioned: false,
+          creationType: 'ai' // AI generates opportunity nodes
         };
       });
 
@@ -1583,9 +1578,7 @@ Note:
   const generateStep4Opportunities = async (parentNode) => {
     if (parentNode.type !== 'insight' || parentNode.step !== 3) return;
 
-    const existingChildren = nodes.filter(n => n.parentId === parentNode.id);
-    if (existingChildren.length > 0) return;
-
+    // Allow generating additional children even if children already exist
     setLoading(true);
     await generateStep4OpportunitiesInternal(parentNode);
     // Update creativityHistory for single node expansion
@@ -1921,9 +1914,15 @@ JSON-ONLY OUTPUT FORMAT
     const nodeToEdit = nodes.find(n => n.id === editingNode);
     if (!nodeToEdit) return;
 
-    setNodes(prev => prev.map(n =>
-      n.id === editingNode ? { ...n, text: editValue, edited: true } : n
-    ));
+    setNodes(prev => prev.map(n => {
+      if (n.id === editingNode) {
+        // If AI created and now being edited, mark as co-creation
+        const newCreationType = (n.creationType === 'ai') ? 'co-creation' : (n.creationType || 'human');
+        // Update both title and text so the displayed content changes
+        return { ...n, title: editValue, text: editValue, edited: true, creationType: newCreationType };
+      }
+      return n;
+    }));
 
     // Track Edit Node event
     trackEvent('Edit Node', 'HUMAN', {
@@ -1963,9 +1962,14 @@ JSON-ONLY OUTPUT FORMAT
     const nodeToEdit = nodes.find(n => n.id === editingDescriptionNodeId);
     if (!nodeToEdit) return;
 
-    setNodes(prev => prev.map(n =>
-      n.id === editingDescriptionNodeId ? { ...n, description: editDescriptionValue, edited: true } : n
-    ));
+    setNodes(prev => prev.map(n => {
+      if (n.id === editingDescriptionNodeId) {
+        // If AI created and now being edited, mark as co-creation
+        const newCreationType = (n.creationType === 'ai') ? 'co-creation' : (n.creationType || 'human');
+        return { ...n, description: editDescriptionValue, edited: true, creationType: newCreationType };
+      }
+      return n;
+    }));
 
     // Track Edit Node event (description edit is still an edit)
     trackEvent('Edit Node', 'HUMAN', {
@@ -2325,7 +2329,8 @@ Note:
         x: initialX,
         y: initialY,
         level: 0,
-        manuallyPositioned: false
+        manuallyPositioned: false,
+        creationType: 'ai' // AI generates main nodes via handleGenerateMainNode
       };
 
       // Add node with animation
@@ -2393,12 +2398,12 @@ Note:
       childType = 'insight';
       childStep = 3;
       childLevel = 2;
-      childCategory = parentNode.category;
+      childCategory = 'Insight'; // Always set category to "Insight" for insight nodes
     } else if (parentNode.type === 'insight' && parentNode.step === 3) {
       childType = 'opportunity';
       childStep = 4;
       childLevel = 3;
-      childCategory = parentNode.category;
+      childCategory = 'Design Opportunity'; // Always set category to "Design Opportunity" for opportunity nodes
     } else {
       // Default: create same level as parent
       childType = parentNode.type;
@@ -2421,7 +2426,7 @@ Note:
     const baseY = parentPos.y + 120;
 
     // Apply collision detection to avoid overlapping with existing nodes
-    const nodeSize = childType === 'main' ? 120 : childType === 'sub' ? 100 : childType === 'insight' ? 90 : 80;
+    const nodeSize = childType === 'main' ? 140 : childType === 'sub' ? 120 : childType === 'insight' ? 110 : 110;
     const allExistingNodes = nodes;
     const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, null);
     const initialX = adjustedPos.x;
@@ -2442,7 +2447,8 @@ Note:
       x: initialX,
       y: initialY,
       level: childLevel,
-      manuallyPositioned: false
+      manuallyPositioned: false,
+      creationType: 'human' // Human manually creates node
     };
 
     // Add node with animation
@@ -3052,6 +3058,9 @@ Note:
         // Check if this is a new connection (node is animating)
         const isNewConnection = node.isAnimating || animatingNodes.has(node.id);
 
+        // Check if either node is being dragged - disable transition during drag
+        const isDragging = draggingNode === node.id || draggingNode === parentId;
+
         connections.push(
           <line
             key={`line-${parentId}-${node.id}`}
@@ -3066,7 +3075,8 @@ Note:
             opacity="1"
             className={isNewConnection ? "line-draw" : ""}
             style={{
-              transition: isNewConnection ? 'none' : 'all 0.4s ease-out',
+              // Match node transition timing and disable during drag
+              transition: (isNewConnection || isDragging) ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               filter: isSelectedConnection ? 'drop-shadow(0 0 3px rgba(152, 16, 250, 0.5))' : 'none'
             }}
           />
@@ -3079,12 +3089,12 @@ Note:
 
   const getNodeSizeForConnection = (node) => {
     // Return diameter for circular nodes
-    if (node.type === 'topic') return 140;
-    if (node.type === 'main') return 120;
-    if (node.type === 'sub') return 100;
-    if (node.type === 'insight') return 80;
-    if (node.type === 'opportunity') return 80;
-    return 100;
+    if (node.type === 'topic') return 160;
+    if (node.type === 'main') return 140;
+    if (node.type === 'sub') return 120;
+    if (node.type === 'insight') return 110;
+    if (node.type === 'opportunity') return 110;
+    return 120;
   };
 
   const currentMetrics = creativityHistory.length > 0
@@ -3323,7 +3333,7 @@ Note:
         <div className="flex-1 flex overflow-hidden relative">
           {/* Top Menu Bar - Structure Mode, Canvas Centered */}
           <div className="absolute top-6 left-[calc(50%-192px)] transform -translate-x-1/2 z-50">
-            <div className="bg-white rounded-lg shadow-lg border border-purple-200 px-2 py-2 flex items-center gap-1">
+            <div className="bg-white shadow-lg border border-purple-200 px-2 py-2 flex items-center gap-1" style={{ borderRadius: '16px' }}>
               {/* Home Button */}
               <button
                 onClick={handleHome}
@@ -3374,7 +3384,7 @@ Note:
           >
             {analyzingStructure || !hierarchyAnalysis ? (
               <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
-                <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
+                <div className="bg-white shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]" style={{ borderRadius: '16px' }}>
                   {/* Mini Structure Preview - Icon-like */}
                   <div className="relative" style={{ width: '200px', height: '150px' }}>
                     {/* Animated Quadrants */}
@@ -3438,7 +3448,7 @@ Note:
               <>
                 {/* 2x2 Matrix Background */}
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+                  <div className="bg-white shadow-lg border border-gray-200 p-6" style={{ borderRadius: '16px' }}>
                     <div id="structure-graph-container" className="relative" style={{ width: '1000px', height: '750px' }}>
                       {/* Quadrants - Background layer */}
                       <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-yellow-50 border-r-2 border-b-2 border-gray-300" style={{ zIndex: 0 }}>
@@ -3528,12 +3538,12 @@ Note:
 
                       {/* Axis Labels */}
                       <div className="absolute -left-20 top-1/2 transform -translate-y-1/2 -rotate-90" style={{ zIndex: 2 }}>
-                        <div className="bg-white border border-gray-300 rounded-lg px-2.5 py-1 shadow-sm">
+                        <div className="bg-white border border-gray-300 px-2.5 py-1 shadow-sm" style={{ borderRadius: '16px' }}>
                           <span className="text-sm font-semibold text-gray-700">Impact →</span>
                         </div>
                       </div>
                       <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-10" style={{ zIndex: 2 }}>
-                        <div className="bg-white border border-gray-300 rounded-lg px-2.5 py-1 shadow-sm">
+                        <div className="bg-white border border-gray-300 px-2.5 py-1 shadow-sm" style={{ borderRadius: '16px' }}>
                           <span className="text-sm font-semibold text-gray-700">Feasibility →</span>
                         </div>
                       </div>
@@ -5198,78 +5208,41 @@ Note:
           </p>
         </div>
 
-        {/* Idea Input Section */}
-        <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-3xl mb-12">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-4">Type down your idea</h2>
-          <textarea
-            value={landingInputValue}
-            onChange={(e) => setLandingInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !loading && landingInputValue.trim()) {
-                if (e.shiftKey) {
-                  // Shift+Enter: new line
-                  return;
+        {/* Idea Input Section - Redesigned */}
+        <div className="w-full max-w-2xl mb-12">
+          <div className="relative flex items-center bg-white border border-gray-300 shadow-md overflow-hidden" style={{ borderRadius: '50px' }}>
+            <input
+              type="text"
+              value={landingInputValue}
+              onChange={(e) => setLandingInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !loading && landingInputValue.trim()) {
+                  e.preventDefault();
+                  handleStartExploration();
                 }
-                e.preventDefault();
-                handleStartExploration();
-              }
-            }}
-            placeholder="Enter your creative concept, problem to solve, or topic to explore..."
-            className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:outline-none resize-none mb-4 min-h-[120px] text-base transition-all"
-            style={{
-              borderColor: isInputFocused ? '#AD46FF' : '#d1d5db',
-              boxShadow: isInputFocused ? '0 0 0 2px rgba(173, 70, 255, 0.2), 0 0 8px rgba(173, 70, 255, 0.3)' : 'none'
-            }}
-            disabled={loading}
-            onFocus={() => setIsInputFocused(true)}
-            onBlur={() => setIsInputFocused(false)}
-          />
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">Press Enter to start</p>
+              }}
+              placeholder="Put down your idea..."
+              className="flex-1 px-6 py-4 text-base focus:outline-none"
+              style={{ borderRadius: '50px' }}
+              disabled={loading}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
+            />
             <button
               onClick={handleStartExploration}
               disabled={loading || !landingInputValue.trim()}
-              className="flex items-center gap-2 px-8 py-3 text-white rounded-lg disabled:cursor-not-allowed font-semibold text-lg transition-all shadow-lg"
-              style={{
-                background: (loading || !landingInputValue.trim())
-                  ? 'linear-gradient(to right, #d1d5db, #d1d5db)'
-                  : 'linear-gradient(to right, #AD46FF, #F6339A, #FF6900)',
-                opacity: (loading || !landingInputValue.trim()) ? 0.5 : 1
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && landingInputValue.trim()) {
-                  e.currentTarget.style.background = 'linear-gradient(to right, #9d36e6, #e62a8a, #ff5a00)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!loading && landingInputValue.trim()) {
-                  e.currentTarget.style.background = 'linear-gradient(to right, #AD46FF, #F6339A, #FF6900)';
-                }
-              }}
+              className="flex items-center justify-center w-10 h-10 bg-[#AD46FF] text-white rounded-full disabled:bg-gray-300 disabled:cursor-not-allowed transition-all hover:bg-[#9d36e6] mr-2"
             >
-              {loading ? 'Starting...' : 'Start Exploration'}
-              <ArrowRight size={20} />
+              <ArrowRight size={18} className="text-white" />
             </button>
           </div>
         </div>
 
-        {/* Features Section */}
-        <div className="text-center">
-          <h3 className="text-xl font-semibold text-gray-800 mb-6">Features</h3>
-          <div className="flex gap-12 justify-center">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-              <span className="text-gray-700 font-medium">Semantic Graph</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-              <span className="text-gray-700 font-medium">Reflection Panel</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-green-500"></div>
-              <span className="text-gray-700 font-medium">Creativity Report</span>
-            </div>
-          </div>
+        {/* Placeholder Boxes */}
+        <div className="flex gap-4 justify-center">
+          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
+          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
+          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
         </div>
       </div>
     );
@@ -5472,13 +5445,23 @@ Note:
           </svg>
 
           {nodes.map(node => {
-            const pos = getNodePosition(node);
+            // During drag, use the node's stored position directly for immediate update
+            // This ensures node and connection line move together
+            const pos = (draggingNode === node.id && node.manuallyPositioned)
+              ? { x: node.x, y: node.y }
+              : getNodePosition(node);
             const isEditing = editingNode === node.id;
             const isSelected = selectedNode === node.id;
             const isFocused = focusedNode === node.id;
 
             // Determine node creation type: Human, AI, or Co-creation
             const getNodeCreationType = (node) => {
+              // Priority: Use stored creationType if available (most reliable)
+              if (node.creationType) {
+                return node.creationType;
+              }
+
+              // Fallback: Check event history for backward compatibility
               // Check if node was created by AI (check both string and number ID formats)
               const aiCreateEvent = eventHistory.find(e =>
                 e.event_type === 'Create Node' &&
@@ -5527,26 +5510,25 @@ Note:
             const isDragging = draggingNode === node.id;
             const isNodeHovered = hoveredNodeId === node.id;
 
-            const baseNodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
+            const baseNodeSize = node.type === 'topic' ? 160 : node.type === 'main' ? 140 : node.type === 'sub' ? 120 : node.type === 'insight' ? 110 : 110;
 
-            // Calculate dynamic size based on text length when selected
-            const nodeText = node.type === 'topic' ? (node.title || node.keyword || 'TOPIC') : (node.title || node.text || '');
-            const textLength = nodeText.length;
+            // Calculate dynamic size when selected - ensure consistent scaling for all nodes
             let dynamicNodeSize = baseNodeSize;
 
             if (isSelected || isEditing) {
-              // Calculate size based on text length: longer text = larger node
-              // More conservative size increase
-              const textBasedSize = Math.min(textLength * 1.0, 50); // Max 50px additional
-              dynamicNodeSize = Math.max(baseNodeSize, baseNodeSize + textBasedSize);
+              // Use consistent scale factor for all nodes regardless of text length
+              // This ensures Human input nodes scale the same as other nodes
+              const scaleFactor = 1.3; // Consistent 30% increase for all selected nodes
+              dynamicNodeSize = baseNodeSize * scaleFactor;
               // Cap at reasonable maximum
-              dynamicNodeSize = Math.min(dynamicNodeSize, baseNodeSize * 2.0);
+              dynamicNodeSize = Math.min(dynamicNodeSize, baseNodeSize * 1.8);
             }
 
             const nodeSize = dynamicNodeSize;
             const buttonRadius = (nodeSize / 2) + 10; // 버튼들이 노드 주변에 배치될 반경 (실제 노드 크기에 맞춤)
             const hoverAreaSize = nodeSize + (buttonRadius * 2) + 20; // Hover 영역 확장
-            const clickAreaSize = nodeSize + 10; // 클릭 영역을 노드 크기보다 약간 크게 (겹치는 노드 구분)
+            // Use nodeSize directly for the actual node size (not clickAreaSize) to ensure proper scaling
+            const clickAreaSize = nodeSize; // Use nodeSize directly so selected nodes scale properly
 
             return (
               <div
@@ -5561,7 +5543,9 @@ Note:
                   width: `${hoverAreaSize}px`,
                   height: `${hoverAreaSize}px`,
                   pointerEvents: isSpacePressed ? 'none' : 'auto',
-                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // Smooth, natural scale animation
+                  // Disable transition during drag for immediate response
+                  // Slightly longer transition for smoother interaction
+                  transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' // Smooth, natural scale animation
                 }}
               >
                 {/* 노드 영역 - 드래그 가능 */}
@@ -5702,7 +5686,7 @@ Note:
                       <div
                         className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
                         style={{
-                          transition: node.isAnimating ? 'none' : 'all 0.25s ease-out', // Smooth, natural transition
+                          transition: node.isAnimating ? 'none' : 'all 0.35s ease-out', // Slightly longer transition for smoother interaction
                           width: '100%',
                           height: '100%',
                           padding: isSelectedForStructure && selectedForStructure.size > 1 ? '3px' : '0px',
@@ -6015,6 +5999,12 @@ Note:
 
             // Determine node creation type: Human, AI, or Co-creation
             const getNodeCreationType = (node) => {
+              // Priority: Use stored creationType if available (most reliable)
+              if (node.creationType) {
+                return node.creationType;
+              }
+
+              // Fallback: Check event history for backward compatibility
               // Check if node was created by AI (check both string and number ID formats)
               const aiCreateEvent = eventHistory.find(e =>
                 e.event_type === 'Create Node' &&
@@ -6149,7 +6139,7 @@ Note:
             const buttonStyles = getButtonStyles();
 
             return (
-              <div className={`fixed bottom-6 w-[480px] z-[100] shadow-2xl bg-white rounded-lg border border-gray-200 ${isReflectionSidebarOpen ? 'left-[calc(50%-200px)]' : 'left-1/2'} transform -translate-x-1/2`} style={{ pointerEvents: 'auto' }}>
+              <div className={`fixed bottom-6 w-[600px] z-[100] shadow-2xl bg-white border border-gray-200 ${isReflectionSidebarOpen ? 'left-[calc(50%-250px)]' : 'left-1/2'} transform -translate-x-1/2`} style={{ pointerEvents: 'auto', borderRadius: '16px' }}>
                 {/* Header with icon, title and buttons */}
                 <div className={`flex items-center justify-between p-4 border-b border-gray-200 ${headerContent.headerBg}`}>
                   <div className="flex items-center gap-3">
