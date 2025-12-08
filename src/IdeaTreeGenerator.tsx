@@ -1879,8 +1879,9 @@ JSON-ONLY OUTPUT FORMAT
 
   const handleEdit = (node) => {
     setEditingNode(node.id);
-    setEditValue(node.text);
-    setSelectedNode(null);
+    setEditValue(node.title || node.text || '');
+    // Keep selectedNode so the node stays enlarged
+    // setSelectedNode(null);
   };
 
   const handleEditSave = () => {
@@ -2337,8 +2338,15 @@ Note:
     // Position new node: index will be siblings.length, so position = (index - 1) * spacing
     // This centers the first child at parent, and spreads others evenly
     const index = siblings.length;
-    const initialX = parentPos.x + (index - 1) * spacing;
-    const initialY = parentPos.y + 120;
+    const baseX = parentPos.x + (index - 1) * spacing;
+    const baseY = parentPos.y + 120;
+
+    // Apply collision detection to avoid overlapping with existing nodes
+    const nodeSize = childType === 'main' ? 120 : childType === 'sub' ? 100 : childType === 'insight' ? 90 : 80;
+    const allExistingNodes = nodes;
+    const adjustedPos = findNonCollidingPosition({ x: baseX, y: baseY }, nodeSize, allExistingNodes, null);
+    const initialX = adjustedPos.x;
+    const initialY = adjustedPos.y;
 
     // Create new node
     const newNodeId = Date.now();
@@ -5046,12 +5054,21 @@ Note:
               0.20 * (humanScores.elaboration / 100) -
               0.20 * (dependency / 100);
 
-            // Determine strengths
+            // Determine strengths - compare all dimensions
             const humanStrengths = [];
             const aiStrengths = [];
-            if (humanScores.flexibility > aiScores.flexibility) humanStrengths.push('Flexibility');
-            if (humanScores.originality > aiScores.originality) humanStrengths.push('Originality');
+
+            // Check all dimensions
+            if (humanScores.fluency > aiScores.fluency) humanStrengths.push('Fluency');
             if (aiScores.fluency > humanScores.fluency) aiStrengths.push('Fluency');
+
+            if (humanScores.flexibility > aiScores.flexibility) humanStrengths.push('Flexibility');
+            if (aiScores.flexibility > humanScores.flexibility) aiStrengths.push('Flexibility');
+
+            if (humanScores.originality > aiScores.originality) humanStrengths.push('Originality');
+            if (aiScores.originality > humanScores.originality) aiStrengths.push('Originality');
+
+            if (humanScores.elaboration > aiScores.elaboration) humanStrengths.push('Elaboration');
             if (aiScores.elaboration > humanScores.elaboration) aiStrengths.push('Elaboration');
 
             return (
@@ -5175,17 +5192,6 @@ Note:
                         </div>
                       )}
                     </div>
-
-                    {/* Insight */}
-                    <div className="mt-6 bg-purple-50 rounded-lg p-4">
-                      <p className="text-sm text-gray-700">
-                        {humanStrengths.length > 0 && aiStrengths.length > 0
-                          ? `Your ${humanStrengths.join(' & ')} scores are higher than AI contributions, indicating strong creative independence.`
-                          : humanStrengths.length > 0
-                            ? `Your ${humanStrengths.join(' & ')} scores are higher than AI contributions.`
-                            : 'Your creative process shows a balanced collaboration between human insight and AI assistance.'}
-                      </p>
-                    </div>
                   </div>
 
                   {/* Right: Side-by-Side Comparison - Bar Chart */}
@@ -5273,22 +5279,26 @@ Note:
                 {/* Understanding TTCT Dimensions */}
                 <div className="bg-white rounded-lg p-6 shadow-md border border-gray-200">
                   <h3 className="text-lg font-bold text-gray-800 mb-4">Understanding TTCT Dimensions</h3>
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="font-semibold text-gray-800 mb-2">Fluency</h4>
-                      <p className="text-sm text-gray-600">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Fluency - Light purple/lavender */}
+                    <div className="bg-purple-50 rounded-lg p-4 border border-purple-100">
+                      <h4 className="font-bold text-purple-700 mb-2">Fluency</h4>
+                      <p className="text-sm text-gray-700">The ability to generate a large number of ideas quickly. Measures idea quantity and brainstorming productivity.</p>
                     </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-800 mb-2">Flexibility</h4>
-                      <p className="text-sm text-gray-600">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
+                    {/* Flexibility - Light blue/teal */}
+                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                      <h4 className="font-bold text-blue-700 mb-2">Flexibility</h4>
+                      <p className="text-sm text-gray-700">The ability to approach problems from different perspectives and switch between categories of thinking.</p>
                     </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-800 mb-2">Originality</h4>
-                      <p className="text-sm text-gray-600">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
+                    {/* Originality - Light pink/rose */}
+                    <div className="bg-pink-50 rounded-lg p-4 border border-pink-100">
+                      <h4 className="font-bold text-pink-800 mb-2">Originality</h4>
+                      <p className="text-sm text-gray-700">The uniqueness and novelty of ideas. Measures how different your concepts are from common responses.</p>
                     </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-800 mb-2">Elaboration</h4>
-                      <p className="text-sm text-gray-600">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
+                    {/* Elaboration - Light yellow/orange */}
+                    <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
+                      <h4 className="font-bold text-orange-700 mb-2">Elaboration</h4>
+                      <p className="text-sm text-gray-700">The ability to develop and add detail to ideas. Measures depth and completeness of concepts.</p>
                     </div>
                   </div>
                 </div>
@@ -5657,8 +5667,24 @@ Note:
             const isDragging = draggingNode === node.id;
             const isNodeHovered = hoveredNodeId === node.id;
 
-            const nodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
-            const buttonRadius = (nodeSize / 2) + 10; // 버튼들이 노드 주변에 배치될 반경 (더 가깝게)
+            const baseNodeSize = node.type === 'topic' ? 140 : node.type === 'main' ? 120 : node.type === 'sub' ? 100 : node.type === 'insight' ? 80 : 80;
+
+            // Calculate dynamic size based on text length when selected
+            const nodeText = node.type === 'topic' ? (node.title || node.keyword || 'TOPIC') : (node.title || node.text || '');
+            const textLength = nodeText.length;
+            let dynamicNodeSize = baseNodeSize;
+
+            if (isSelected || isEditing) {
+              // Calculate size based on text length: longer text = larger node
+              // More conservative size increase
+              const textBasedSize = Math.min(textLength * 1.5, 80); // Max 80px additional
+              dynamicNodeSize = Math.max(baseNodeSize, baseNodeSize + textBasedSize);
+              // Cap at reasonable maximum
+              dynamicNodeSize = Math.min(dynamicNodeSize, baseNodeSize * 2.5);
+            }
+
+            const nodeSize = dynamicNodeSize;
+            const buttonRadius = (nodeSize / 2) + 10; // 버튼들이 노드 주변에 배치될 반경 (실제 노드 크기에 맞춤)
             const hoverAreaSize = nodeSize + (buttonRadius * 2) + 20; // Hover 영역 확장
             const clickAreaSize = nodeSize + 10; // 클릭 영역을 노드 크기보다 약간 크게 (겹치는 노드 구분)
 
@@ -5674,7 +5700,8 @@ Note:
                   top: `${pos.y - (hoverAreaSize - nodeSize) / 2}px`,
                   width: `${hoverAreaSize}px`,
                   height: `${hoverAreaSize}px`,
-                  pointerEvents: isSpacePressed ? 'none' : 'auto'
+                  pointerEvents: isSpacePressed ? 'none' : 'auto',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // Smooth, natural scale animation
                 }}
               >
                 {/* 노드 영역 - 드래그 가능 */}
@@ -5711,35 +5738,111 @@ Note:
                   }}
                 >
                   {isEditing ? (
-                    <div className="bg-white p-3 rounded-lg shadow-lg border-2 border-blue-500">
-                      <textarea
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        className="w-full p-2 border rounded text-sm resize-none"
-                        rows={3}
-                        autoFocus
-                      />
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={handleEditSave}
-                          className="flex-1 px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingNode(null)}
-                          className="flex-1 px-2 py-1 bg-gray-400 text-white rounded text-xs hover:bg-gray-500"
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                    <div
+                      className="rounded-full shadow-md transition-all relative flex flex-col items-center justify-center"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                      }}
+                    >
+                      {(() => {
+                        // Use the same styling as the normal node
+                        let borderGradient = '';
+                        let backgroundGradient = '';
+
+                        if (node.type === 'topic') {
+                          borderGradient = '#666666';
+                          backgroundGradient = 'radial-gradient(circle, #FFFFFF 0%, #FEF7F7 50%, #FDF2F8 100%)';
+                        } else if (nodeCreationType === 'co-creation') {
+                          borderGradient = 'linear-gradient(to right, #B855E6 0%, #D9738F 50%, #F59E6B 100%)';
+                          backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #E8D5F5 50%, #FFE8D5 100%)';
+                        } else if (nodeCreationType === 'human') {
+                          borderGradient = '#9810FA';
+                          backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #EED8FF 100%)';
+                        } else if (nodeCreationType === 'ai') {
+                          borderGradient = '#FE6215';
+                          backgroundGradient = 'linear-gradient(to bottom, #FFFFFF 0%, #FFD8BD 100%)';
+                        } else {
+                          const defaultColors = {
+                            main: { border: 'linear-gradient(to right, #93c5fd 0%, #3b82f6 100%)', bg: '#eff6ff' },
+                            sub: { border: 'linear-gradient(to right, #86efac 0%, #10b981 100%)', bg: '#f0fdf4' },
+                            insight: { border: 'linear-gradient(to right, #fde047 0%, #eab308 100%)', bg: '#fefce8' },
+                            opportunity: { border: 'linear-gradient(to right, #e9d5ff 0%, #a855f7 100%)', bg: '#faf5ff' }
+                          };
+                          const nodeColor = defaultColors[node.type] || { border: 'linear-gradient(to right, #e5e7eb 0%, #9ca3af 100%)', bg: '#ffffff' };
+                          borderGradient = nodeColor.border;
+                          backgroundGradient = nodeColor.bg;
+                        }
+
+                        return (
+                          <div
+                            className="rounded-full w-full h-full relative"
+                            style={{
+                              background: borderGradient,
+                              padding: '2px'
+                            }}
+                          >
+                            <div
+                              className="rounded-full w-full h-full flex flex-col items-center justify-center relative"
+                              style={{
+                                background: backgroundGradient,
+                                padding: node.type === 'topic' ? '14px' : node.type === 'main' ? '12px' : node.type === 'sub' ? '10px' : '8px',
+                                boxShadow: nodeCreationType === 'human'
+                                  ? '0 4px 12px rgba(152, 16, 250, 0.3), 0 2px 6px rgba(152, 16, 250, 0.2)'
+                                  : nodeCreationType === 'ai'
+                                    ? '0 4px 12px rgba(254, 98, 21, 0.3), 0 2px 6px rgba(254, 98, 21, 0.2)'
+                                    : nodeCreationType === 'co-creation'
+                                      ? '0 4px 12px rgba(173, 70, 255, 0.3), 0 2px 6px rgba(246, 51, 154, 0.2)'
+                                      : undefined
+                              }}
+                            >
+                              <textarea
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                className="w-full h-full bg-transparent border-none outline-none resize-none text-center px-2 py-6 break-words leading-tight font-semibold text-gray-700"
+                                style={{
+                                  fontSize: node.type === 'topic' ? '0.875rem' : '0.75rem',
+                                  lineHeight: '1.3',
+                                  wordBreak: 'break-word',
+                                  overflow: 'auto'
+                                }}
+                                autoFocus
+                              />
+                              {/* Save and Cancel buttons - circular icon buttons like generate/delete */}
+                              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditSave();
+                                  }}
+                                  className="w-8 h-8 bg-green-500 hover:bg-green-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+                                  title="Save"
+                                >
+                                  <Check size={16} />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingNode(null);
+                                  }}
+                                  className="w-8 h-8 bg-gray-400 hover:bg-gray-500 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+                                  title="Cancel"
+                                >
+                                  <X size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <>
                       <div
-                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isSelected ? 'scale-105' : isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
+                        className={`rounded-full shadow-md cursor-pointer hover:shadow-xl transition-all relative flex flex-col items-center justify-center ${isFocused ? 'scale-110 shadow-2xl' : ''} ${node.isAnimating ? 'node-appear' : ''}`}
                         style={{
-                          transition: node.isAnimating ? 'none' : 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                          transition: node.isAnimating ? 'none' : 'all 0.25s ease-out', // Smooth, natural transition
                           width: '100%',
                           height: '100%',
                           padding: isSelectedForStructure && selectedForStructure.size > 1 ? '3px' : '0px',
@@ -5988,8 +6091,8 @@ Note:
               <div className="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-4 min-w-[200px]">
                 <div className="flex items-center gap-1 text-4xl font-bold text-gray-800">
                   <span>N</span>
-                  <span className="relative inline-block w-10 h-10">
-                    <span className="absolute inset-0 border-4 border-purple-200 border-t-purple-600 rounded-full loading-spinner"></span>
+                  <span className="relative inline-block w-5 h-5">
+                    <span className="absolute inset-0 rounded-full loading-spinner" style={{ borderWidth: '2.5px', borderColor: '#e9d5ff', borderTopColor: '#9333ea' }}></span>
                   </span>
                   <span className="ml-1">AI</span>
                 </div>
@@ -6495,87 +6598,107 @@ Note:
             </button>
           </div>
 
-          {reflections.length === 0 ? (
-            <div className="text-center text-gray-400 mt-8">
-              <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Generate ideas to see reflections here</p>
-            </div>
-          ) : (
-            <div className="space-y-3 pb-96">
-              {reflections.map(reflection => {
-                const isExpanded = expandedReflectionId === reflection.id;
+          {(() => {
+            // Filter reflections to show only those for the selected node
+            const filteredReflections = selectedNode
+              ? reflections.filter(r => r.nodeId === selectedNode)
+              : [];
 
-                // Get color scheme and icon based on type
-                const getTypeStyle = (type) => {
-                  switch (type) {
-                    case 'critic':
-                      return {
-                        bg: 'bg-blue-50',
-                        border: 'border-blue-100',
-                        title: 'Focus Area',
-                        titleColor: 'text-blue-800',
-                        icon: Sparkles,
-                        iconColor: 'text-blue-600'
-                      };
-                    case 'advice':
-                      return {
-                        bg: 'bg-purple-50',
-                        border: 'border-purple-100',
-                        title: 'Suggestion',
-                        titleColor: 'text-purple-800',
-                        icon: ArrowRight,
-                        iconColor: 'text-purple-600'
-                      };
-                    default:
-                      return {
-                        bg: 'bg-green-50',
-                        border: 'border-green-100',
-                        title: 'Pattern',
-                        titleColor: 'text-green-800',
-                        icon: Zap,
-                        iconColor: 'text-green-600'
-                      };
-                  }
-                };
+            if (!selectedNode) {
+              return (
+                <div className="text-center text-gray-400 mt-8">
+                  <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Click on a node to see its reflections</p>
+                </div>
+              );
+            }
 
-                const typeStyle = getTypeStyle(reflection.type);
-                const IconComponent = typeStyle.icon;
-                const isFocused = focusedReflection === reflection.id;
+            if (filteredReflections.length === 0) {
+              return (
+                <div className="text-center text-gray-400 mt-8">
+                  <Lightbulb size={48} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No reflections for this node</p>
+                </div>
+              );
+            }
 
-                return (
-                  <div
-                    key={reflection.id}
-                    onClick={() => handleReflectionClick(reflection.id, reflection.nodeId)}
-                    className={`${typeStyle.bg} rounded-lg p-4 shadow-sm border ${isFocused ? 'border-2 border-blue-400 shadow-lg ring-2 ring-blue-200' : typeStyle.border} relative cursor-pointer hover:shadow-md transition-all`}
-                  >
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteReflection(reflection.id);
-                      }}
-                      className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors z-10"
-                      title="Delete"
+            return (
+              <div className="space-y-3 pb-96">
+                {filteredReflections.map(reflection => {
+                  const isExpanded = expandedReflectionId === reflection.id;
+
+                  // Get color scheme and icon based on type
+                  const getTypeStyle = (type) => {
+                    switch (type) {
+                      case 'critic':
+                        return {
+                          bg: 'bg-blue-50',
+                          border: 'border-blue-100',
+                          title: 'Focus Area',
+                          titleColor: 'text-blue-800',
+                          icon: Sparkles,
+                          iconColor: 'text-blue-600'
+                        };
+                      case 'advice':
+                        return {
+                          bg: 'bg-purple-50',
+                          border: 'border-purple-100',
+                          title: 'Suggestion',
+                          titleColor: 'text-purple-800',
+                          icon: ArrowRight,
+                          iconColor: 'text-purple-600'
+                        };
+                      default:
+                        return {
+                          bg: 'bg-green-50',
+                          border: 'border-green-100',
+                          title: 'Pattern',
+                          titleColor: 'text-green-800',
+                          icon: Zap,
+                          iconColor: 'text-green-600'
+                        };
+                    }
+                  };
+
+                  const typeStyle = getTypeStyle(reflection.type);
+                  const IconComponent = typeStyle.icon;
+                  const isFocused = focusedReflection === reflection.id;
+
+                  return (
+                    <div
+                      key={reflection.id}
+                      onClick={() => handleReflectionClick(reflection.id, reflection.nodeId)}
+                      className={`${typeStyle.bg} rounded-lg p-4 shadow-sm border ${isFocused ? 'border-2 border-blue-400 shadow-lg ring-2 ring-blue-200' : typeStyle.border} relative cursor-pointer hover:shadow-md transition-all`}
                     >
-                      <X size={16} className="text-gray-500" />
-                    </button>
-                    <div className="flex items-start gap-3 pr-6">
-                      <div className={`${typeStyle.iconColor} flex-shrink-0 mt-0.5`}>
-                        <IconComponent size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className={`text-base font-bold ${typeStyle.titleColor} mb-2`}>
-                          {typeStyle.title}
-                        </h3>
-                        <p className="text-sm text-gray-700 leading-relaxed">
-                          {reflection.title || reflection.topic || reflection.content}
-                        </p>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteReflection(reflection.id);
+                        }}
+                        className="absolute top-2 right-2 p-1 hover:bg-white rounded transition-colors z-10"
+                        title="Delete"
+                      >
+                        <X size={16} className="text-gray-500" />
+                      </button>
+                      <div className="flex items-start gap-3 pr-6">
+                        <div className={`${typeStyle.iconColor} flex-shrink-0 mt-0.5`}>
+                          <IconComponent size={20} />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className={`text-base font-bold ${typeStyle.titleColor} mb-2`}>
+                            {typeStyle.title}
+                          </h3>
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {reflection.title || reflection.topic || reflection.content}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
