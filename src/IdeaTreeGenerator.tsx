@@ -5238,11 +5238,86 @@ Note:
           </div>
         </div>
 
-        {/* Placeholder Boxes */}
-        <div className="flex gap-4 justify-center">
-          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
-          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
-          <div className="w-32 h-24 bg-gray-200 rounded-lg"></div>
+        {/* Video Boxes - GIF-like autoplay */}
+        <div className="flex gap-6 justify-center">
+          <div className="flex flex-col items-center">
+            <div
+              className="w-96 aspect-video rounded-lg overflow-hidden relative bg-black flex items-center justify-center"
+              style={{
+                boxShadow: '0 10px 25px -5px rgba(152, 16, 250, 0.3)'
+              }}
+            >
+              <video
+                autoPlay
+                loop
+                muted
+                playsInline
+                disablePictureInPicture
+                disableRemotePlayback
+                className="w-full h-full object-contain"
+                style={{ pointerEvents: 'none' }}
+                onError={(e) => {
+                  // Hide video if it fails to load, show background instead
+                  e.currentTarget.style.display = 'none';
+                }}
+              >
+                <source src="/Web_01_01.mp4" type="video/mp4" />
+              </video>
+            </div>
+            <p className="mt-4 text-gray-500 font-medium text-lg">Exploration Mode</p>
+          </div>
+          <div className="flex flex-col items-center">
+            <div
+              className="w-96 aspect-video rounded-lg overflow-hidden relative bg-black flex items-center justify-center"
+              style={{
+                boxShadow: '0 10px 25px -5px rgba(152, 16, 250, 0.3)'
+              }}
+            >
+              <video
+                autoPlay
+                loop
+                muted
+                playsInline
+                disablePictureInPicture
+                disableRemotePlayback
+                className="w-full h-full object-contain"
+                style={{ pointerEvents: 'none' }}
+                onError={(e) => {
+                  // Hide video if it fails to load, show background instead
+                  e.currentTarget.style.display = 'none';
+                }}
+              >
+                <source src="/Web_02_01.mp4" type="video/mp4" />
+              </video>
+            </div>
+            <p className="mt-4 text-gray-500 font-medium text-lg">Structure Mode</p>
+          </div>
+          <div className="flex flex-col items-center">
+            <div
+              className="w-96 aspect-video rounded-lg overflow-hidden relative bg-black flex items-center justify-center"
+              style={{
+                boxShadow: '0 10px 25px -5px rgba(152, 16, 250, 0.3)'
+              }}
+            >
+              <video
+                autoPlay
+                loop
+                muted
+                playsInline
+                disablePictureInPicture
+                disableRemotePlayback
+                className="w-full h-full object-contain"
+                style={{ pointerEvents: 'none' }}
+                onError={(e) => {
+                  // Hide video if it fails to load, show background instead
+                  e.currentTarget.style.display = 'none';
+                }}
+              >
+                <source src="/Web_03_01.mp4" type="video/mp4" />
+              </video>
+            </div>
+            <p className="mt-4 text-gray-500 font-medium text-lg">Creativity Tracking</p>
+          </div>
         </div>
       </div>
     );
