@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
-import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus, BarChart, TrendingUp, TrendingDown } from 'lucide-react';
+import { Edit2, Trash2, Zap, X, Lightbulb, ArrowRight, ArrowLeft, Check, Maximize2, Star, Plus, Sparkles, RotateCcw, AlertCircle, ChevronRight, Home, LayoutGrid, User, Bot, UserPlus, BarChart, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 
 // API URL: Use environment variable or fallback to localhost for development
 // In Vercel deployment, use relative path '/api/anthropic' which maps to Vercel Functions
@@ -1041,29 +1041,36 @@ Note:
           messages: [
             {
               role: "user",
-              content: `Given a main problem-framing node, expand it into 1-3 concrete, specific sub-nodes (generate 1, 2, or 3 based on what makes sense).
+              content: `Given a main problem-framing node, expand it into exactly 4 sub-nodes following Problem Framing 2 framework.
 
 Main Node: [${parentNode.category}] ${parentNode.text}
 
-🔶 STEP 2: SUB-NODE EXPANSION
+🔶 STEP 2: SUB-NODE EXPANSION (Problem Framing 2)
 
 🟢 GOAL:
-Expand the main node into 1-3 concrete, specific sub-nodes that help detail the space.
+Expand the main node into exactly 4 sub-nodes that provide deeper problem framing:
+1. The three most representative scenarios (spaces) within the topic
+2. Key behaviors and psychological moments in user actions
+3. The most critical transition points in the task flow where barriers need to be reduced (typical task pain points)
+4. The key milestones in the task-oriented goal perspective
 
 🟡 CONSTRAINTS:
-- Generate 1, 2, or 3 sub-nodes (choose the number that makes most sense)
+- Generate exactly 4 sub-nodes (one for each category above)
 - Sub-nodes must be grounded in real-world places, actors, actions, or goals
 - Avoid abstract categories (e.g., "Public Space" → ✘; "Hospital Waiting Room" → ✔)
 - Avoid including user pain points, opinions, or ideas
 - Avoid jumping ahead to solutions
 - Each sub-node should be specific and concrete (5-15 words)
+- Each sub-node should correspond to one of the 4 categories listed above
 
 🟠 FORMAT:
 Respond ONLY in JSON format:
 {
   "subNodes": [
-    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "..." },
-    ... (1-3 items total)
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "...", "category": "scenarios" },
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "...", "category": "behaviors" },
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "...", "category": "transition_points" },
+    { "title": "...", "description": "...", "keyword": "...", "critic": "...", "advice": "...", "category": "milestones" }
   ]
 }
 
@@ -1099,6 +1106,14 @@ Note:
       const text = data.content[0].text.trim();
       const cleanText = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleanText);
+
+      // Validate that exactly 4 sub-nodes were generated
+      if (!parsed.subNodes || parsed.subNodes.length !== 4) {
+        console.error('Expected exactly 4 sub-nodes, but got:', parsed.subNodes?.length || 0);
+        alert('Expected exactly 4 sub-nodes. Please try again.');
+        setLoading(false);
+        return [];
+      }
 
       const newAiCount = aiGenerationCount + 1;
       setAiGenerationCount(newAiCount);
@@ -1205,13 +1220,6 @@ Note:
   };
 
   const generateStep2SubNodes = async (parentNode) => {
-    // This function is now deprecated - main nodes should generate insights directly
-    // Keeping for backward compatibility but redirecting to insight generation
-    if (parentNode.type === 'main' && parentNode.step === 1) {
-      await generateStep3Insights(parentNode);
-      return;
-    }
-
     if (parentNode.type !== 'main' || parentNode.step !== 1) return;
 
     // Allow generating additional children even if children already exist
@@ -2131,6 +2139,12 @@ Respond ONLY in JSON format:
             continue;
           }
 
+          // Skip if target node is already at final step (opportunities)
+          if (targetNode.type === 'opportunity' || targetNode.step === 4) {
+            console.warn(`Cannot generate from node at final step: ${targetNode.text}`);
+            continue;
+          }
+
           let generatedNodes = [];
 
           // Generate based on decision - use appropriate function
@@ -2344,11 +2358,28 @@ Note:
   };
 
   const handleGenerate = (node) => {
+    // Check if node is at the final step (opportunities) - no more generation possible
+    if (node.type === 'opportunity' || node.step === 4) {
+      alert('This node has already reached Design Opportunities!\nExplore the opportunities and expand your ideas manually, or select other nodes to continue generating.');
+      setSelectedNode(null);
+      return;
+    }
+
     // Check if multiple nodes are selected
     const selectedNodes = Array.from(selectedForStructure);
     if (selectedNodes.length > 1) {
       // Multi-selection generate
       const selectedNodesList = nodes.filter(n => selectedNodes.includes(n.id));
+
+      // Check if any selected node is at final step
+      const hasFinalStepNode = selectedNodesList.some(n => n.type === 'opportunity' || n.step === 4);
+      if (hasFinalStepNode) {
+        alert('Some selected nodes have already reached Design Opportunities!\nPlease deselect those nodes and try again, or explore them manually to expand your ideas.');
+        setSelectedForStructure(new Set());
+        setSelectedNode(null);
+        return;
+      }
+
       generateMultiSelection(selectedNodesList);
       setSelectedForStructure(new Set());
       setSelectedNode(null);
@@ -3676,9 +3707,7 @@ Note:
                 <div className="space-y-4 flex-1">
                   {/* Header */}
                   <div className="flex items-start gap-3">
-                    <div className="p-3 bg-purple-100 rounded-lg">
-                      <Lightbulb size={24} className="text-purple-600" />
-                    </div>
+                    <Lightbulb className="text-[#AD46FF]" size={24} strokeWidth={2.5} style={{ stroke: '#AD46FF', fill: '#AD46FF' }} />
                     <div className="flex-1">
                       <h2 className="text-lg font-bold text-gray-800">Design Opportunity Details</h2>
                     </div>
@@ -3937,13 +3966,13 @@ Note:
                 <div className="w-8 h-8 flex items-center justify-center">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <defs>
-                      <linearGradient id="title-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <linearGradient id="tracking-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
                         <stop offset="0%" stopColor="#AD46FF" />
                         <stop offset="50%" stopColor="#F6339A" />
                         <stop offset="100%" stopColor="#FF6900" />
                       </linearGradient>
                     </defs>
-                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="url(#title-gradient)" />
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke="url(#tracking-gradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </div>
                 <h1 className="text-2xl font-bold text-gray-800">
@@ -6172,7 +6201,7 @@ Note:
             // Determine button styles based on creation type
             const getButtonStyles = () => {
               if (nodeCreationType === 'co-creation') {
-                // Both buttons use purple gradient
+                // Human button: purple, AI button: orange (same as other nodes)
                 return {
                   humanButton: {
                     background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
@@ -6181,10 +6210,10 @@ Note:
                     iconColor: 'text-purple-700'
                   },
                   aiButton: {
-                    background: 'linear-gradient(to right, #F6EBFF 0%, #E1B8FF 100%)',
-                    hoverBackground: 'linear-gradient(to right, #E1B8FF 0%, #D4A5FF 100%)',
-                    textColor: 'text-purple-700',
-                    iconColor: 'text-purple-700'
+                    background: 'linear-gradient(to right, #FFEBDD 0%, #FFD19D 100%)',
+                    hoverBackground: 'linear-gradient(to right, #FFD19D 0%, #FFC085 100%)',
+                    textColor: 'text-orange-700',
+                    iconColor: 'text-orange-700'
                   }
                 };
               } else if (nodeCreationType === 'ai') {
